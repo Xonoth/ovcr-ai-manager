@@ -1,0 +1,39 @@
+{
+  "name": "ai-manager",
+  "version": "1.0.0",
+  "description": "[OVCR] AI Manager - gestionnaire multi-comptes IA",
+  "main": "main.js",
+  "author": "X'o-noth",
+  "license": "ISC",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-packager . \"[OVCR] AI Manager\" --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --app-version=1.0.0 --asar.unpack=**/monaco-editor/** --ignore=\"monaco-editor/(dev|esm|min-maps)\" --ignore=\"monaco-editor/(CHANGELOG|ThirdPartyNotices|README)\" --ignore=\"editor\\.main\\.nls\\.[a-z-]+\\.js\" --ignore=\"^/(PROJECT_CONTEXT\\.md|README\\.md|THIRD-PARTY-NOTICES\\.md|DISTRIBUTION-LISEZ-MOI\\.txt|\\.gitignore)$\" && node scripts/prune-locales.js"
+  },
+  "keywords": [],
+  "devDependencies": {
+    "@electron/packager": "^20.0.3",
+    "electron": "^43.1.1",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.45.0"
+  },
+  "build": {
+    "appId": "com.aimanager.workbench",
+    "productName": "[OVCR] AI Manager",
+    "directories": {
+      "output": "dist"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/monaco-editor/**"
+    ],
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "OVCR-AI-Manager-${version}.exe"
+    }
+  }
+}

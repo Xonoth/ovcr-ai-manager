@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>[OVCR] AI Manager</title>
+<!-- Polices et icônes 100% LOCALES (chantier D) : plus aucun CDN externe.
+     - Polices : @font-face ci-dessous, fichiers .woff2 dans assets/fonts/.
+     - Icônes  : SVG inline via assets/icons.js (sous-ensemble Font Awesome).
+     Objectif : l'app s'affiche identiquement hors-ligne / réseau filtré, et on
+     supprime tout prérequis de whitelist CDN pour une future CSP stricte. -->
+<script src="assets/icons.js"></script>
+<style>
+  /* ===== Polices locales (chantier D) =====
+     Google sert ces 3 familles en fonte VARIABLE : un seul .woff2 par sous-ensemble
+     couvre toute la plage de graisses, d'où `font-weight: 100 900` (le navigateur
+     clampe à l'axe réel de chaque fonte). On ne charge que les sous-ensembles
+     latin + latin-ext (suffisent pour le français), pas cyrillique/grec/vietnamien.
+     Chemins RELATIFS : résolus depuis index.html, valables en dev ET en .exe. */
+  @font-face {
+    font-family: 'Space Grotesk'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("assets/fonts/SpaceGrotesk-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Space Grotesk'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("assets/fonts/SpaceGrotesk-latin-ext.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  @font-face {
+    font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("assets/fonts/Inter-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("assets/fonts/Inter-latin-ext.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  @font-face {
+    font-family: 'JetBrains Mono'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("assets/fonts/JetBrainsMono-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'JetBrains Mono'; font-style: normal; font-weight: 100 900; font-display: swap;
+    src: url("assets/fonts/JetBrainsMono-latin-ext.woff2") format("woff2");
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+
+  /* Icônes SVG inline (remplace Font Awesome). Le <span class="ic"> est une boîte
+     carrée de 1em qui suit la taille de police du contexte (comme le faisait <i>) ;
+     le <svg> hérite de la couleur via currentColor. */
+  .ic { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; line-height: 1; vertical-align: -0.125em; flex-shrink: 0; }
+  .ic > svg { width: 100%; height: 100%; display: block; fill: currentColor; }
+
+  :root {
+    /* ===== Palette officielle OverCreep (relevée sur overcreep.ovh) ===== */
+    --bg: #0b0817;                              /* theme-color officielle du site */
+    --bg-elevated: #120e24;                     /* panneaux (relevé sur le site) */
+    --bg-card: rgba(24, 18, 49, 0.6);           /* cartes #181231 */
+    --bg-card-hover: rgba(34, 26, 66, 0.8);
+    --border: rgba(44, 34, 85, 0.75);           /* #2c2255 */
+    --border-active: #4a3a7a;
+    --fg: #ece6f4;
+    --fg-muted: #a99fd6;                        /* texte atténué violet (relevé) */
+    --fg-dim: #6b5f90;
+    --accent: #8b5cf6;                          /* violet officiel OverCreep */
+    --accent-dim: rgba(139, 92, 246, 0.15);
+    --accent-glow: rgba(139, 92, 246, 0.35);
+    --rose: #f230aa;                            /* rose officiel OverCreep */
+    --rose-dim: rgba(242, 48, 170, 0.15);
+    /* Aurora — dégradés relevés tels quels sur le hero du site (+ cyan discret ajouté) */
+    --aurora-1: rgba(139, 92, 246, 0.18);       /* violet, halo haut-centre */
+    --aurora-2: rgba(242, 48, 170, 0.07);       /* rose, halo haut-droite */
+    --aurora-3: rgba(56, 189, 248, 0.05);       /* cyan discret (ajout) */
+    --danger: #ff4d6a;
+    --danger-dim: rgba(255, 77, 106, 0.15);
+    --warning: #ffb347;
+    --claude: #d4a574; --claude-dim: rgba(212, 165, 116, 0.15);
+    --gemini: #4285f4; --gemini-dim: rgba(66, 133, 244, 0.15);
+    --chatgpt: #10a37f; --chatgpt-dim: rgba(16, 163, 127, 0.15);
+    --perplexity: #20b8cd; --perplexity-dim: rgba(32, 184, 205, 0.15);
+    --zeta: #b839f9; --zeta-dim: rgba(184, 57, 249, 0.15);
+    --grok: #c8ccd4; --grok-dim: rgba(200, 204, 212, 0.14);
+    --leonardo: #d946ef; --leonardo-dim: rgba(217, 70, 239, 0.15);
+    /* Suno : marque officiellement noir/blanc ; on reprend le pôle orange du
+       dégradé signature de leur app (rose #fd429c -> orange #f8441b), seule
+       teinte encore libre parmi les services. Meshy : vert lime officiel. */
+    --suno: #f8441b; --suno-dim: rgba(248, 68, 27, 0.15);
+    --meshy: #c5f955; --meshy-dim: rgba(197, 249, 85, 0.12);
+    --radius: 14px; --radius-sm: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    /* Fond "aurora" OverCreep : halos radiaux violet + rose (+ cyan discret)
+       superposés au fond sombre, reproduisant le hero de overcreep.ovh.
+       Fond CSS pur (aucune image) -> fonctionne en dev ET en .exe packagé.
+       Les webviews IA sont opaques : l'aurora ne déborde pas dans leur contenu. */
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(80% 50% at 50% -10%, var(--aurora-1), transparent 70%),
+      radial-gradient(60% 45% at 92% 8%, var(--aurora-2), transparent 70%),
+      radial-gradient(55% 45% at 8% 25%, var(--aurora-3), transparent 70%);
+    background-attachment: fixed;
+    color: var(--fg);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+  }
+
+  /* Layout Principal */
+  .dashboard {
+    width: 380px; min-width: 380px; height: 100vh;
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    background: rgba(11, 8, 23, 0.72);
+    backdrop-filter: blur(16px); z-index: 2;
+    transition: width 0.3s ease, min-width 0.3s ease;
+  }
+  .dashboard.collapsed { width: 0; min-width: 0; border: none; overflow: hidden; }
+
+  .workspace-container {
+    flex: 1; position: relative; background: transparent; z-index: 1;
+    display: flex; flex-direction: column; min-width: 0;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* Header */
+  .header { padding: 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .header__brand { display: flex; align-items: center; gap: 14px; }
+  .header__icon { width: 42px; height: 42px; border-radius: 12px; background: linear-gradient(135deg, var(--rose), var(--accent)); display: flex; align-items: center; justify-content: center; font-size: 18px; color: #fff; box-shadow: 0 0 24px var(--accent-glow); animation: logoGlow 4.5s ease-in-out infinite; }
+  /* Pulsation douce du halo du logo (CSS pur, léger) — ambiance communauté */
+  @keyframes logoGlow {
+    0%, 100% { box-shadow: 0 0 22px var(--accent-glow); }
+    50%      { box-shadow: 0 0 34px var(--accent-glow), 0 0 12px var(--rose-dim); }
+  }
+  .header__title { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; }
+  .header__subtitle { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+
+  /* Boutons */
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--fg); font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+  .btn:hover { background: var(--bg-card-hover); border-color: var(--border-active); }
+  .btn--primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .btn--icon { padding: 8px; width: 32px; height: 32px; justify-content: center; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 20px 24px; flex-shrink: 0; }
+  .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .stat-card__label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-weight: 600; }
+  .stat-card__value { font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; }
+
+  /* Comptes */
+  .section-title { font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 600; padding: 0 24px 16px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 1.5px; }
+  /* Ligne titre + bouton « Ajouter un compte » alignés (le bouton ne subit pas
+     l'uppercase/letter-spacing du titre). */
+  .section-title--accounts { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .section-title--accounts .btn--icon { width: 28px; height: 28px; letter-spacing: normal; }
+  .accounts-list { padding: 0 24px 24px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+  .account-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); backdrop-filter: blur(8px); position: relative; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+  .account-card:hover { border-color: var(--border-active); transform: translateY(-4px); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+  .account-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 25px 50px -12px rgba(139, 92, 246, 0.30); background: rgba(139, 92, 246, 0.05); }
+  .account-card.active .account-avatar { box-shadow: 0 0 14px var(--accent-glow); } /* halo sur l'avatar du compte actif */
+  .account-header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; cursor: pointer; transition: margin-bottom 0.25s ease; }
+  .account-avatar { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 700; color: var(--bg); flex-shrink: 0; }
+  .account-info { flex: 1; min-width: 0; }
+  .account-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+  .active-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+  .account-email { font-size: 11px; color: var(--fg-muted); font-family: 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .account-actions { display: flex; gap: 6px; }
+
+  /* Grille de Services */
+  /* Grille auto-adaptative : autant de colonnes de ≥85px que la carte peut en
+     contenir, étirées pour occuper toute la largeur. Un 8e/9e service ajouté à
+     SERVICES se placera tout seul (nouvelle ligne au besoin), sans retoucher ce CSS. */
+  .services-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(85px, 1fr)); gap: 10px; border-top: 1px solid var(--border); padding-top: 16px; }
+  .service-column { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .svc-btn { width: 100%; padding: 8px 6px; border-radius: 20px; font-size: 12px; font-weight: 600; text-align: center; cursor: pointer; transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); border: 1px solid transparent; white-space: nowrap; }
+  .svc-claude { background: var(--claude-dim); color: var(--claude); border-color: rgba(212,165,116,0.2); }
+  .svc-gemini { background: var(--gemini-dim); color: var(--gemini); border-color: rgba(66,133,244,0.2); }
+  .svc-chatgpt { background: var(--chatgpt-dim); color: var(--chatgpt); border-color: rgba(16,163,127,0.2); }
+  .svc-perplexity { background: var(--perplexity-dim); color: var(--perplexity); border-color: rgba(32,184,205,0.2); }
+  .svc-zeta { background: var(--zeta-dim); color: var(--zeta); border-color: rgba(184,57,249,0.2); }
+  .svc-grok { background: var(--grok-dim); color: var(--grok); border-color: rgba(200,204,212,0.25); }
+  .svc-leonardo { background: var(--leonardo-dim); color: var(--leonardo); border-color: rgba(217,70,239,0.2); }
+  .svc-suno { background: var(--suno-dim); color: var(--suno); border-color: rgba(248,68,27,0.2); }
+  .svc-meshy { background: var(--meshy-dim); color: var(--meshy); border-color: rgba(197,249,85,0.2); }
+  .svc-btn.cooldown-active { opacity: 0.4; filter: grayscale(50%); }
+  .cooldown-btn { width: 100%; padding: 5px 4px; font-size: 10.5px; font-weight: 500; text-align: center; cursor: pointer; transition: all 0.2s; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--fg-muted); font-family: 'JetBrains Mono', monospace; }
+  .cooldown-btn.active { background: var(--danger-dim); border-color: rgba(255, 77, 106, 0.3); color: var(--danger); }
+
+  /* --- Vue compacte : repli/dépli de la grille de services par carte --- */
+  /* Animation de hauteur sans max-height arbitraire : la rangée de grille passe
+     de 1fr à 0fr et l'enfant (overflow hidden + min-height 0) se clippe à 0. */
+  .services-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.25s ease; }
+  .services-inner { overflow: hidden; min-height: 0; }
+  .account-card.collapsed .services-wrap { grid-template-rows: 0fr; }
+  .account-card.collapsed .account-header { margin-bottom: 0; }
+  .collapse-chevron { color: var(--fg-dim); font-size: 12px; transition: transform 0.25s ease; }
+  .account-header:hover .collapse-chevron { color: var(--accent); }
+  .account-card.collapsed .collapse-chevron { transform: rotate(-90deg); }
+  /* Badge « N/7 disponibles » : visible uniquement carte repliée. Ambre dès
+     qu'au moins un service est en cooldown, pour rester repérable replié. */
+  .svc-summary { display: none; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--fg-muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; flex-shrink: 0; }
+  .account-card.collapsed .svc-summary { display: inline-block; }
+  .svc-summary.has-cd { color: var(--warning); border-color: rgba(255, 179, 71, 0.35); }
+  #btnToggleAllCards .ic { transition: transform 0.25s ease; }
+  #btnToggleAllCards.all-collapsed .ic { transform: rotate(-90deg); }
+
+  /* Workspace */
+  .workspace-header { height: 56px; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; background: rgba(11, 8, 23, 0.72); backdrop-filter: blur(16px); z-index: 10; flex-shrink: 0; }
+  .workspace-body { flex: 1; display: flex; overflow: hidden; }
+  
+  /* Éditeur & Explorateur */
+  .ide-panel { display: flex; width: 500px; min-width: 300px; max-width: 800px; border-right: 1px solid var(--border); }
+  .ide-panel.collapsed { flex: 0 0 0 !important; width: 0 !important; min-width: 0 !important; border: none; overflow: hidden; }
+  .file-explorer { width: 240px; min-width: 240px; border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+  .file-explorer.collapsed { flex: 0 0 0 !important; width: 0 !important; min-width: 0 !important; border: none; overflow: hidden; padding: 0; }
+  .file-item { padding: 8px 12px; border-radius: 6px; font-size: 13px; color: var(--fg-muted); cursor: pointer; display: flex; align-items: center; gap: 10px; }
+  .file-item:hover { background: var(--bg-card-hover); color: var(--fg); }
+  .file-item.active { background: var(--accent-dim); color: var(--accent); }
+  .editor-container { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  .editor-tabs { height: 36px; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 10px; background: var(--bg-elevated); font-size: 12px; color: var(--fg-muted); gap: 10px; }
+  #monacoContainer { flex: 1; min-width: 0; overflow: hidden; }
+
+  /* Webviews */
+  .webviews-panel { flex: 1; display: flex; overflow: hidden; position: relative; min-width: 0; }
+  .pane-wrapper { flex: 1; position: relative; border-right: 1px solid var(--border); display: none; min-width: 0; overflow: hidden; }
+  .pane-wrapper.active { display: flex; flex-direction: column; } /* Corrigé pour le flex */
+  .pane-wrapper:last-child { border-right: none; }
+  .pane-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--fg-dim); gap: 16px; pointer-events: none; }
+  .pane-empty .ic { font-size: 32px; color: var(--border-active); }
+  /* État de chargement d'un service (retiré à dom-ready : l'animation ne tourne
+     pas en continu, uniquement pendant la connexion). transform = composité GPU. */
+  .pane-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--fg-muted); font-size: 13px; pointer-events: none; z-index: 5; }
+  .pane-spinner { width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  webview { width: 100%; height: 100%; border: none; display: inline-flex; flex: 1; }
+
+  .collapse-arrow { cursor: pointer; color: var(--fg-muted); transition: transform 0.3s; padding: 4px; }
+  .collapse-arrow:hover { color: var(--accent); }
+
+  /* Poignées de redimensionnement */
+  .resizer { flex: 0 0 6px; align-self: stretch; cursor: col-resize; position: relative; z-index: 15; background: transparent; }
+  .resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: var(--border); transition: background 0.15s, width 0.15s; }
+  .resizer:hover::after, .resizer.dragging::after { width: 3px; background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+  .resizer-pane { display: none; } /* affichée uniquement en vue scindée */
+  .ide-panel.collapsed + .resizer-ide { display: none; }
+  .file-explorer.collapsed + .resizer-explorer { display: none; }
+  #resizeOverlay { position: fixed; inset: 0; z-index: 999; cursor: col-resize; display: none; }
+  #resizeOverlay.active { display: block; }
+
+  /* Palette & Modals */
+  .palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); z-index: 100; display: none; align-items: flex-start; justify-content: center; padding-top: 15vh; }
+  .palette-overlay.open { display: flex; }
+  .palette-box { width: 500px; background: var(--bg-elevated); border: 1px solid var(--border-active); border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8); overflow: hidden; }
+  .palette-input { width: 100%; padding: 20px 24px; background: transparent; border: none; border-bottom: 1px solid var(--border); color: var(--fg); font-size: 18px; outline: none; }
+  .palette-results { max-height: 300px; overflow-y: auto; padding: 8px; }
+  .palette-item { padding: 12px 16px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; }
+  .palette-item.selected { background: var(--accent-dim); }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); z-index: 90; display: none; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; width: 440px; }
+  .modal__title { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .form-group { margin-bottom: 16px; }
+  .form-label { font-size: 12px; color: var(--fg-muted); display: block; margin-bottom: 8px; font-weight: 500; }
+  .form-input { width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--fg); font-family: 'JetBrains Mono', monospace; font-size: 13px; outline: none; }
+  .modal__actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+  /* --- Modale d'aide « Comprendre les IA disponibles » ---
+     Réutilise .modal-overlay/.modal ; hauteur bornée à la fenêtre (min 1000x600),
+     seule la LISTE scrolle -> lisible avec 9 services, et toujours correct si un
+     10e est ajouté (aucune hauteur fixe). */
+  .modal--help { width: 620px; max-width: calc(100vw - 48px); max-height: calc(100vh - 96px); display: flex; flex-direction: column; padding: 28px; }
+  .help-list { overflow-y: auto; margin-top: 18px; display: flex; flex-direction: column; gap: 12px; padding-right: 6px; }
+  .help-entry { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; }
+  .help-entry__name { font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .help-entry__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .help-entry__line { font-size: 13px; line-height: 1.55; color: var(--fg); margin-top: 4px; }
+  .help-entry__label { color: var(--fg-muted); font-weight: 600; }
+  .toast-container { position: fixed; top: 20px; right: 20px; z-index: 200; display: flex; flex-direction: column; gap: 10px; }
+  .toast { padding: 12px 18px; background: var(--bg-elevated); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); animation: toastIn 0.3s ease; display: flex; align-items: center; gap: 10px; }
+  @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+</style>
+</head>
+<body>
+
+<div class="toast-container" id="toastContainer"></div>
+<div id="resizeOverlay"></div>
+
+<!-- Palette -->
+<div class="palette-overlay" id="paletteOverlay">
+  <div class="palette-box">
+    <input type="text" class="palette-input" id="paletteInput" placeholder="Rechercher un compte ou une IA..." oninput="filterPalette()">
+    <div class="palette-results" id="paletteResults"></div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<aside class="dashboard" id="dashboard">
+  <header class="header">
+    <div class="header__brand">
+      <div class="header__icon"><span class="ic" data-icon="bolt"></span></div>
+      <div>
+        <div class="header__title">[OVCR] AI Manager</div>
+        <div class="header__subtitle">Ctrl+K</div>
+      </div>
+    </div>
+    <div class="collapse-arrow" onclick="toggleDashboard()" title="Réduire"><span class="ic" data-icon="chevron-left"></span></div>
+  </header>
+
+  <div class="stats">
+    <div class="stat-card"><div class="stat-card__label">Comptes actifs</div><div class="stat-card__value" style="color: var(--accent)" id="statActive">0</div></div>
+    <div class="stat-card"><div class="stat-card__label">IA Disponibles</div><div class="stat-card__value" style="color: var(--rose)" id="statAvailable">0</div></div>
+  </div>
+
+  <div class="section-title section-title--accounts">
+    <span>Comptes enregistrés</span>
+    <div style="display:flex; gap:6px;">
+      <button class="btn btn--icon" id="btnToggleAllCards" onclick="toggleAllCards()" title="Tout replier / Tout déplier"><span class="ic" data-icon="chevron-down"></span></button>
+      <button class="btn btn--icon" onclick="openModal()" title="Ajouter un compte"><span class="ic" data-icon="plus"></span></button>
+    </div>
+  </div>
+  <div class="accounts-list" id="accountsList"></div>
+</aside>
+
+<!-- Workspace -->
+<main class="workspace-container">
+  <div class="workspace-header">
+    <button class="btn btn--icon" id="btnShowDashboard" onclick="toggleDashboard()" style="display:none;" title="Afficher les comptes"><span class="ic" data-icon="chevron-right"></span></button>
+    <button class="btn btn--icon" onclick="toggleExplorer()" title="Explorateur"><span class="ic" data-icon="folder-tree"></span></button>
+    <button class="btn btn--icon" onclick="toggleIdePanel()" title="Éditeur"><span class="ic" data-icon="code"></span></button>
+    <div style="flex:1"></div>
+    <div style="display: flex; gap: 8px;">
+      <!-- Aide « Comprendre les IA disponibles » : dans la barre du workspace
+           (toujours visible, même sidebar repliée), à l'écart des boutons de vue. -->
+      <button class="btn btn--icon" onclick="openHelpModal()" title="Comprendre les IA disponibles"><span class="ic" data-icon="circle-question"></span></button>
+      <!-- Fermer le panneau 2 : visible UNIQUEMENT quand une webview y est ouverte
+           (y compris cachée en vue simple). Détruit la webview -> libère la RAM
+           du process invité ; repasser en vue simple sans fermer reste possible
+           (la session du panneau 2 est alors conservée, comportement par défaut). -->
+      <button class="btn btn--icon" id="btnClosePane2" onclick="closePane2()" style="display:none" title="Fermer le panneau 2 (libère la mémoire)"><span class="ic" data-icon="times-circle"></span></button>
+      <div class="btn btn--icon active" onclick="setLayout(1, this)" title="Vue simple"><span class="ic" data-icon="square"></span></div>
+      <div class="btn btn--icon" onclick="setLayout(2, this)" title="Vue scindée"><span class="ic" data-icon="columns"></span></div>
+    </div>
+  </div>
+
+  <div class="workspace-body">
+    <!-- IDE -->
+    <div class="ide-panel collapsed" id="idePanel">
+      <div class="file-explorer collapsed" id="fileExplorer">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h3 style="font-size: 14px; font-weight: 600;">Fichiers</h3>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn--icon" onclick="selectLocalFolder()" style="width:24px; height:24px;"><span class="ic" data-icon="folder-open"></span></button>
+            <div class="collapse-arrow" onclick="toggleExplorer()" title="Réduire"><span class="ic" data-icon="chevron-left"></span></div>
+          </div>
+        </div>
+        <div id="fileList"></div>
+      </div>
+      <div class="resizer resizer-explorer" id="resizerExplorer" title="Glisser pour redimensionner"></div>
+      <div class="editor-container">
+        <div class="editor-tabs"><span class="ic" data-icon="js"></span> <span id="activeFileName">Aucun fichier</span></div>
+        <div id="monacoContainer"></div>
+      </div>
+    </div>
+
+    <div class="resizer resizer-ide" id="resizerIde" title="Glisser pour redimensionner l'éditeur"></div>
+
+    <!-- IA Panneaux -->
+    <div class="webviews-panel" id="webviewArea">
+      <div class="pane-wrapper active" id="pane1">
+        <div class="pane-empty"><span class="ic" data-icon="robot"></span><span>Panneau 1 vide</span></div>
+      </div>
+      <div class="resizer resizer-pane" id="resizerPane" title="Glisser pour redimensionner"></div>
+      <div class="pane-wrapper" id="pane2">
+        <div class="pane-empty"><span class="ic" data-icon="robot"></span><span>Panneau 2 vide</span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Modal Compte -->
+<div class="modal-overlay" id="accountModal">
+  <div class="modal">
+    <div class="modal__title" id="modalTitle">Ajouter un compte</div>
+    <div class="modal__desc">Le profil permet d'isoler les cookies dans Electron.</div>
+    <input type="hidden" id="editId">
+    <div class="form-group"><label class="form-label">Nom du compte</label><input class="form-input" id="inputName" type="text"></div>
+    <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="inputEmail" type="email"></div>
+    <div class="form-group"><label class="form-label">Nom du Profil</label><input class="form-input" id="inputProfile" type="text"></div>
+    <div class="modal__actions">
+      <button class="btn" onclick="closeModal()">Annuler</button>
+      <button class="btn btn--primary" onclick="saveAccount()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Suppression -->
+<div class="modal-overlay" id="deleteModal">
+  <div class="modal">
+    <div class="modal__title">Supprimer le compte</div>
+    <div class="modal__desc" id="deleteDesc" style="color:var(--fg-muted); font-size:13px; margin-bottom:8px;">Cette action est irréversible.</div>
+    <input type="hidden" id="deleteId">
+    <div class="modal__actions">
+      <button class="btn" onclick="closeDeleteModal()">Annuler</button>
+      <button class="btn" style="background:var(--danger); color:#fff; border-color:var(--danger)" onclick="confirmDelete()">Supprimer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Aide : « Comprendre les IA disponibles ». La liste est générée par le
+     JS à partir de SERVICES + SERVICE_INFO (data-driven, comme le reste). -->
+<div class="modal-overlay" id="helpModal">
+  <div class="modal modal--help">
+    <div class="modal__title">Comprendre les IA disponibles</div>
+    <div style="color:var(--fg-muted); font-size:13px; margin-top:4px;">À quoi sert chaque service, et quand l'utiliser.</div>
+    <div class="help-list" id="helpList"></div>
+    <div class="modal__actions">
+      <button class="btn" onclick="closeHelpModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Script Monaco (Isolé pour éviter le conflit require) -->
+<script>
+  // On sauvegarde le require d'Electron avant que Monaco ne le remplace
+  const nodeRequire = window.require;
+</script>
+<script src="node_modules/monaco-editor/min/vs/loader.js" onerror="window.__monacoLoadFailed = true;"></script>
+<script>
+  // Échappe les caractères HTML dangereux (chantier A). À utiliser PARTOUT où une
+  // donnée saisie par l'utilisateur (nom / email / profil de compte, nom de
+  // fichier) est injectée dans du HTML via innerHTML. Empêche l'exécution de
+  // HTML/JS injecté — critique ici car le renderer tourne en nodeIntegration:true
+  // (un simple nom de compte « <img onerror> » vaudrait sinon exécution de code).
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Filet de sécurité (chantier audit 3.6) : si assets/icons.js n'a pas pu se
+  // charger, `hydrateIcons` serait absente et le 1er appel dans initApp() ferait
+  // planter TOUTE l'app. On garantit une fonction no-op -> au pire, pas d'icônes,
+  // mais l'app reste utilisable.
+  if (typeof window.hydrateIcons !== 'function') window.hydrateIcons = function () {};
+
+  // === Démarrage ===
+  // L'application démarre IMMÉDIATEMENT et NE DÉPEND PAS de Monaco.
+  // Monaco (l'éditeur de code) est chargé EN LOCAL depuis node_modules et reste
+  // OPTIONNEL : s'il n'arrive pas à s'initialiser (fichier manquant, erreur),
+  // tout le reste de l'application continue de fonctionner normalement.
+  // Chargement PARESSEUX (audit perf) : ~8 Mo de JS Monaco ne sont plus parsés
+  // au démarrage mais au premier clic sur l'éditeur (qui démarre replié).
+  var monacoRequested = false;
+  function ensureMonacoLoaded() {
+    if (monacoRequested) return;
+    monacoRequested = true;
+    // Placeholder le temps du chargement (~centaines de ms) ; remplacé par
+    // Monaco (__initMonacoEditor vide le conteneur) ou par l'éditeur de secours.
+    const c = document.getElementById('monacoContainer');
+    if (c) c.innerHTML = '<div style="padding:14px; font-size:12px; color:var(--fg-dim); font-family:\'JetBrains Mono\',monospace;">Chargement de l\'éditeur…</div>';
+    loadMonaco();
+  }
+  initApp();
+
+  function loadMonaco() {
+    // Si le loader.js n'a pas pu se charger, window.require reste le require
+    // d'Electron (qui n'a pas de .config) : on bascule sur le mode dégradé.
+    if (window.__monacoLoadFailed || typeof window.require === 'undefined' || typeof window.require.config !== 'function') {
+      console.warn('[editor] loader.js indisponible (__monacoLoadFailed=' + window.__monacoLoadFailed + ', require=' + typeof window.require + ')');
+      onMonacoUnavailable();
+      return;
+    }
+    try {
+      // Monaco (en mode Node) résout son chemin relatif au mauvais endroit dans
+      // l'app packagée. On calcule donc le chemin ABSOLU de Monaco à partir de
+      // l'emplacement réel d'index.html (valable en dev ET en .exe packagé).
+      let vsBase = 'node_modules/monaco-editor/min/vs';
+      try {
+        const _url = nodeRequire('url');
+        const _path = nodeRequire('path');
+        const appDir = _path.dirname(_url.fileURLToPath(window.location.href));
+        vsBase = _path.join(appDir, 'node_modules', 'monaco-editor', 'min', 'vs').replace(/\\/g, '/');
+      } catch (e) { console.warn('[editor] chemin absolu Monaco indisponible, repli relatif'); }
+      window.require.config({ paths: { vs: vsBase } });
+      window.require(
+        ['vs/editor/editor.main'],
+        function () {
+          // Monaco chargé : on restaure le require d'Electron, puis on crée l'éditeur.
+          window.require = nodeRequire;
+          console.log('[editor] Monaco chargé OK');
+          if (window.__initMonacoEditor) window.__initMonacoEditor();
+        },
+        function (err) {
+          // Échec du chargement du module Monaco.
+          window.require = nodeRequire;
+          console.error('[editor] échec require(editor.main):', err && (err.message || err));
+          onMonacoUnavailable();
+        }
+      );
+    } catch (e) {
+      window.require = nodeRequire;
+      console.error('[editor] exception loadMonaco:', e && (e.message || e));
+      onMonacoUnavailable();
+    }
+  }
+
+  function onMonacoUnavailable() {
+    // Monaco indisponible : on bascule sur l'éditeur de secours (textarea).
+    if (window.__initFallbackEditor) window.__initFallbackEditor();
+  }
+
+  function initApp() {
+    // On utilise nodeRequire (le require d'Electron sauvegardé plus haut) car
+    // window.require peut encore pointer vers le loader AMD de Monaco à ce stade.
+    const { ipcRenderer } = nodeRequire('electron');
+
+    const SERVICES = [
+      { id: 'claude', name: 'Claude', url: 'https://claude.ai/new', cssClass: 'svc-claude' },
+      { id: 'chatgpt', name: 'ChatGPT', url: 'https://chatgpt.com/', cssClass: 'svc-chatgpt' },
+      { id: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/app', cssClass: 'svc-gemini' },
+      { id: 'zeta', name: 'Z.ai', url: 'https://chat.z.ai/', cssClass: 'svc-zeta' },
+      { id: 'perplexity', name: 'Perplexity', url: 'https://www.perplexity.ai/', cssClass: 'svc-perplexity' },
+      { id: 'grok', name: 'Grok', url: 'https://grok.com/', cssClass: 'svc-grok' },
+      { id: 'leonardo', name: 'Leonardo AI', url: 'https://app.leonardo.ai/', cssClass: 'svc-leonardo' },
+      { id: 'suno', name: 'Suno', url: 'https://suno.com/create', cssClass: 'svc-suno' },
+      { id: 'meshy', name: 'Meshy AI', url: 'https://www.meshy.ai/workspace', cssClass: 'svc-meshy' }
+    ];
+
+    const COLORS = ['#8b5cf6','#f230aa','#c4b5fd','#a855f7','#5865f2','#ec4899','#38bdf8','#f97316'];
+
+    // Contenu de la modale d'aide, indexé par id de service (même philosophie
+    // data-driven que SERVICES : ajouter un service = ajouter son entrée ici).
+    // Texte statique embarqué (aucun fetch réseau), rédigé neutre / grand public.
+    const SERVICE_INFO = {
+      claude: {
+        what: "L'assistant conversationnel d'Anthropic. Il excelle en rédaction, en analyse de longs documents, en programmation et dans les raisonnements qui demandent plusieurs étapes.",
+        when: "Plutôt pour du code, des textes longs et soignés, ou des questions complexes qui demandent de la rigueur."
+      },
+      chatgpt: {
+        what: "L'assistant généraliste d'OpenAI, le plus connu du grand public. Il discute, rédige, résume, génère des images, analyse des fichiers et peut chercher sur le web.",
+        when: "Le couteau suisse du quotidien : brainstorming, questions générales, petites tâches variées."
+      },
+      gemini: {
+        what: "L'assistant IA de Google. Multimodal (texte, images, audio, vidéo), il s'appuie sur la recherche Google et s'intègre aux outils Google (Docs, Gmail, Drive…).",
+        when: "Plutôt pour analyser des images ou vidéos, ou si vous travaillez déjà dans l'écosystème Google."
+      },
+      zeta: {
+        what: "Le chat de Z.ai, propulsé par les modèles GLM. Gratuit pour l'essentiel, avec un mode agent capable de chercher sur le web et de produire des fichiers (docx, pdf, xlsx).",
+        when: "Une alternative gratuite solide pour le chat et le code, quand les quotas des autres sont épuisés."
+      },
+      perplexity: {
+        what: "Un « moteur de réponse » : il cherche sur le web en direct, synthétise plusieurs sources et cite ses références pour chaque affirmation.",
+        when: "Plutôt pour la recherche d'informations à jour, la veille et la vérification de faits avec sources."
+      },
+      grok: {
+        what: "L'assistant de xAI (Elon Musk), connecté au réseau X (ex-Twitter). Ton direct, accès au temps réel de X, génération d'images incluse.",
+        when: "Plutôt pour suivre l'actualité chaude et les tendances via X, ou pour un ton moins formel."
+      },
+      leonardo: {
+        what: "Une plateforme de génération d'images orientée création : illustrations, concept art, assets de jeu vidéo, avec des contrôles fins (styles, modèles, retouche).",
+        when: "Plutôt pour produire des visuels et illustrations de qualité avec un contrôle précis du style."
+      },
+      suno: {
+        what: "Un générateur de musique : il compose des chansons complètes (instruments, voix, paroles) à partir d'une simple description texte, dans à peu près tous les genres.",
+        when: "Plutôt pour créer une musique, un jingle ou une chanson à partir d'un texte ou d'une idée."
+      },
+      meshy: {
+        what: "Un générateur de modèles 3D : il transforme un texte ou une image en objet 3D texturé, avec rigging/animation automatique et export vers les formats standards (GLB, FBX, STL…).",
+        when: "Plutôt pour créer des assets 3D (jeux, impression 3D, animation) sans savoir modéliser."
+      }
+    };
+
+    // Icônes statiques du HTML (chantier D) : on remplit les <span class="ic">.
+    hydrateIcons(document);
+
+    // === Stockage résilient des comptes (chantier C) ===
+    // Toute la persistance passe désormais par ces helpers : lecture tolérante
+    // aux données corrompues + une génération de backup avant chaque écrasement.
+    const STORE_KEY = 'ai_accounts';
+    const BACKUP_KEY = 'ai_accounts_backup';
+
+    // Lecture JSON sûre : ne throw JAMAIS. Renvoie un statut pour distinguer
+    // « vide » (première utilisation) de « corrompu » (backup à proposer).
+    function readJSON(key) {
+      const raw = localStorage.getItem(key);
+      if (raw == null) return { status: 'empty', data: null };
+      try { return { status: 'ok', data: JSON.parse(raw) }; }
+      catch (e) {
+        console.error('[storage] JSON corrompu pour « ' + key + ' » :', e);
+        return { status: 'corrupt', data: null, error: e };
+      }
+    }
+
+    // Sauvegarde la liste de comptes. Avant d'écraser, on copie l'ancienne valeur
+    // dans BACKUP_KEY — mais UNIQUEMENT si elle est elle-même un JSON valide, pour
+    // ne jamais détruire un bon backup en y recopiant une valeur corrompue.
+    function saveAccounts(list) {
+      try {
+        const prev = localStorage.getItem(STORE_KEY);
+        if (prev != null) {
+          try { JSON.parse(prev); localStorage.setItem(BACKUP_KEY, prev); }
+          catch (_) { /* valeur actuelle illisible : on préserve le backup existant */ }
+        }
+        localStorage.setItem(STORE_KEY, JSON.stringify(list));
+        return true;
+      } catch (e) {
+        console.error('[storage] échec écriture des comptes :', e);
+        showToast('Impossible d\'enregistrer les comptes (stockage plein ?)', 'error');
+        return false;
+      }
+    }
+
+    // Fondation réutilisable pour une future fonctionnalité d'export/import JSON
+    // (ne pas coder le backup « en dur » : ces deux fonctions serviront à l'UI).
+    function exportAccountsJSON() { return JSON.stringify(accounts, null, 2); }
+    function importAccountsJSON(text) {
+      const parsed = JSON.parse(text); // peut throw : l'appelant (UI) gère l'erreur
+      if (!Array.isArray(parsed)) throw new Error('Format invalide : un tableau de comptes est attendu.');
+      accounts = parsed;
+      migrateOldAccounts();  // complète/répare les comptes importés
+      saveAccounts(accounts);
+      renderAccounts();
+      return accounts.length;
+    }
+
+    // Chargement initial tolérant : l'app ne plante JAMAIS au démarrage, même si
+    // ai_accounts est corrompu (le cas échéant on propose la restauration plus bas).
+    let dataCorrupt = false;
+    let accounts = [];
+    (function loadAccounts() {
+      const r = readJSON(STORE_KEY);
+      if (r.status === 'ok' && Array.isArray(r.data)) accounts = r.data;
+      else if (r.status === 'corrupt') dataCorrupt = true;
+      // 'empty' ou JSON valide non-tableau -> accounts reste []
+    })();
+
+    // Vue compacte : ids des comptes dont la grille de services est repliée.
+    // Persisté dans localStorage (clé dédiée, même modèle défensif que ide_w :
+    // une valeur absente/illisible retombe sur le défaut = tout déplié).
+    const COLLAPSED_KEY = 'collapsed_accounts';
+    let collapsedAccounts = new Set();
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]');
+      if (Array.isArray(saved)) collapsedAccounts = new Set(saved.filter(x => typeof x === 'string'));
+    } catch (e) { console.warn('[storage] états de repli ignorés :', e); }
+
+    // Écrit l'état de repli en purgeant les ids de comptes supprimés
+    // (la clé ne grossit pas indéfiniment au fil des suppressions).
+    function saveCollapsed() {
+      collapsedAccounts = new Set([...collapsedAccounts].filter(id => accounts.some(a => a.id === id)));
+      try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedAccounts])); } catch (e) {}
+    }
+
+    window.toggleCardCollapse = function(accId) {
+      if (!accounts.some(a => a.id === accId)) return; // garde : id obsolète
+      if (collapsedAccounts.has(accId)) collapsedAccounts.delete(accId);
+      else collapsedAccounts.add(accId);
+      saveCollapsed();
+      renderAccounts();
+    }
+
+    // Bascule globale : s'il reste au moins une carte dépliée on replie tout,
+    // sinon on déplie tout. Idempotent sur les cartes déjà dans l'état cible.
+    window.toggleAllCards = function() {
+      if (accounts.length === 0) return;
+      const anyExpanded = accounts.some(a => !collapsedAccounts.has(a.id));
+      if (anyExpanded) accounts.forEach(a => collapsedAccounts.add(a.id));
+      else collapsedAccounts.clear();
+      saveCollapsed();
+      renderAccounts();
+    }
+
+    let activeAccountId = null;
+    let activePaneId = 1;
+    let layoutMode = 1;
+    let monacoEditor = null;
+    let fallbackTextarea = null;
+    let editorMode = 'none'; // 'monaco' | 'textarea' | 'none'
+    let currentOpenFilePath = null;
+
+    // Migration : convertit les anciens comptes et garantit que chaque compte
+    // possède TOUS les services + un cooldown pour chacun (répare aussi les
+    // comptes enregistrés qui n'avaient pas encore Perplexity/Zeta).
+    function migrateOldAccounts() {
+      let needsUpdate = false;
+      const ALL_SERVICES = SERVICES.map(s => s.id);
+      accounts.forEach(acc => {
+        if (!Array.isArray(acc.services)) { acc.services = [...ALL_SERVICES]; needsUpdate = true; }
+        if (acc.quotas && !acc.cooldowns) { delete acc.quotas; needsUpdate = true; }
+        if (!acc.cooldowns) { acc.cooldowns = {}; needsUpdate = true; }
+        ALL_SERVICES.forEach(sid => {
+          if (!acc.services.includes(sid)) { acc.services.push(sid); needsUpdate = true; }
+          if (acc.cooldowns[sid] === undefined) { acc.cooldowns[sid] = 0; needsUpdate = true; }
+        });
+      });
+      if (needsUpdate) saveAccounts(accounts);
+    }
+    migrateOldAccounts();
+
+    // Éditeur Monaco — créé UNIQUEMENT si Monaco a pu se charger (optionnel).
+    // Appelé par loadMonaco() une fois le CDN chargé. Si Monaco échoue, cette
+    // fonction n'est jamais appelée et l'app fonctionne sans éditeur.
+    window.__initMonacoEditor = function() {
+      if (typeof monaco === 'undefined' || monacoEditor) return;
+      const container = document.getElementById('monacoContainer');
+      container.innerHTML = ''; // retire le placeholder « Chargement de l'éditeur… »
+      monacoEditor = monaco.editor.create(container, {
+        value: '// Sélectionnez un fichier pour l\'éditer ici.\n// Ctrl+S pour sauvegarder.',
+        language: 'javascript',
+        theme: 'vs-dark',
+        automaticLayout: true
+      });
+      monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function() {
+        saveCurrentFile();
+      });
+      editorMode = 'monaco';
+    };
+
+    // Éditeur de SECOURS (textarea) — utilisé si Monaco n'a pas pu se charger.
+    // Toujours fonctionnel : ouverture, édition et sauvegarde (Ctrl+S).
+    window.__initFallbackEditor = function() {
+      if (editorMode === 'monaco') return; // Monaco a réussi, on ne fait rien
+      const c = document.getElementById('monacoContainer');
+      if (!c) return;
+      c.innerHTML = `
+        <div style="display:flex; flex-direction:column; height:100%;">
+          <div style="padding:6px 12px; font-size:11px; color:var(--warning); background:rgba(255,179,71,0.12); border-bottom:1px solid var(--border);">
+            <span class="ic" data-icon="triangle-exclamation"></span> Éditeur simplifié (Monaco indisponible) — Ctrl+S pour sauvegarder
+          </div>
+          <textarea id="fallbackEditor" spellcheck="false" disabled
+            style="flex:1; width:100%; resize:none; border:none; outline:none; padding:14px; background:var(--bg); color:var(--fg); font-family:'JetBrains Mono',monospace; font-size:13px; line-height:1.6; tab-size:2;"
+            placeholder="Sélectionnez un fichier pour l'éditer ici."></textarea>
+        </div>`;
+      hydrateIcons(c); // remplit l'icône SVG du bandeau
+      fallbackTextarea = document.getElementById('fallbackEditor');
+      fallbackTextarea.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveCurrentFile(); }
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          const s = fallbackTextarea.selectionStart, en = fallbackTextarea.selectionEnd;
+          fallbackTextarea.value = fallbackTextarea.value.slice(0, s) + '  ' + fallbackTextarea.value.slice(en);
+          fallbackTextarea.selectionStart = fallbackTextarea.selectionEnd = s + 2;
+        }
+      });
+      editorMode = 'textarea';
+    };
+
+    // Accès unifié à l'éditeur (Monaco OU textarea de secours).
+    function getEditorValue() {
+      if (editorMode === 'monaco' && monacoEditor) return monacoEditor.getValue();
+      if (editorMode === 'textarea' && fallbackTextarea) return fallbackTextarea.value;
+      return null;
+    }
+    function setEditorContent(content, lang) {
+      if (editorMode === 'monaco' && monacoEditor) {
+        monaco.editor.setModelLanguage(monacoEditor.getModel(), lang);
+        monacoEditor.setValue(content);
+      } else if (editorMode === 'textarea' && fallbackTextarea) {
+        fallbackTextarea.disabled = false;
+        fallbackTextarea.value = content;
+      }
+    }
+
+    async function saveCurrentFile() {
+      if (!currentOpenFilePath || editorMode === 'none') return;
+      const content = getEditorValue();
+      if (content === null) return;
+      const success = await ipcRenderer.invoke('save-file', currentOpenFilePath, content);
+      if (success) showToast('Fichier enregistré !');
+      else showToast('Erreur d\'enregistrement.', 'error');
+    }
+
+    // Rendu
+    function renderAccounts() {
+      const container = document.getElementById('accountsList');
+      if (accounts.length === 0) {
+        // État vide : appel à l'action pour créer un premier compte. Le bouton
+        // porte data-action="add" -> géré par la délégation (aucun onclick, aucune
+        // donnée utilisateur ici de toute façon).
+        container.innerHTML = `
+          <div style="text-align:center; padding:40px 20px; color:var(--fg-dim); display:flex; flex-direction:column; align-items:center; gap:16px;">
+            <div>Aucun compte pour l'instant.</div>
+            <button class="btn btn--primary" data-action="add"><span class="ic" data-icon="plus"></span> Créer mon premier compte</button>
+          </div>`;
+        hydrateIcons(container);
+        updateStats(); // remet les stats à 0 (ex. après suppression du dernier compte)
+        return;
+      }
+
+      container.innerHTML = accounts.map((acc, idx) => {
+        // Toute donnée issue du compte (nom, email, profil, couleur) est saisie
+        // par l'utilisateur -> échappée avant injection (chantier A).
+        const initials = escapeHtml(String(acc.name).slice(0, 2).toUpperCase());
+        const color = escapeHtml(acc.color || COLORS[idx % COLORS.length]);
+        const id = escapeHtml(acc.id);
+        const isActive = acc.id === activeAccountId;
+        const isCollapsed = collapsedAccounts.has(acc.id);
+        // Résumé « N/7 » de la carte repliée : même test de disponibilité que
+        // updateStats -> reste synchro avec le tick des cooldowns (re-render 1×/min).
+        const availCount = acc.services.filter(sid => !acc.cooldowns[sid] || acc.cooldowns[sid] <= Date.now()).length;
+
+        const servicesHtml = acc.services.map(sid => {
+          const svc = SERVICES.find(s => s.id === sid);
+          if (!svc) return '';
+          const cdTime = acc.cooldowns[sid] || 0;
+          const isOnCooldown = cdTime > Date.now();
+          const btnClass = isOnCooldown ? `${svc.cssClass} cooldown-active` : svc.cssClass;
+          const cdBtnClass = isOnCooldown ? 'cooldown-btn active' : 'cooldown-btn';
+          const cdText = isOnCooldown ? formatCooldown(cdTime - Date.now()) : 'Épuiser (24h)';
+          // svc.id vient de SERVICES (valeurs sûres codées en dur). Les actions
+          // passent par des data-* lus par la délégation d'événements (chantier A) :
+          // plus aucune donnée n'est injectée dans un attribut onclick.
+          return `
+            <div class="service-column">
+              <button class="svc-btn ${btnClass}" data-action="open-service" data-acc="${id}" data-svc="${svc.id}">${escapeHtml(svc.name)}</button>
+              <button class="${cdBtnClass}" data-action="toggle-cooldown" data-acc="${id}" data-svc="${svc.id}">${cdText}</button>
+            </div>
+          `;
+        }).join('');
+
+        // Le header entier bascule le repli (data-action="toggle-collapse") :
+        // les boutons éditer/supprimer imbriqués portent leur propre data-action,
+        // que closest() résout en priorité -> aucun conflit de clic.
+        return `
+          <div class="account-card ${isActive ? 'active' : ''} ${isCollapsed ? 'collapsed' : ''}">
+            <div class="account-header" data-action="toggle-collapse" data-acc="${id}">
+              <div class="account-avatar" style="background:${color}">${initials}</div>
+              <div class="account-info">
+                <div class="account-name">${escapeHtml(acc.name)} ${isActive ? '<span class="active-dot"></span>' : ''}</div>
+                <div class="account-email">${escapeHtml(acc.email)} • ${escapeHtml(acc.profile)}</div>
+              </div>
+              <div class="account-actions">
+                <button class="btn btn--icon" data-action="edit" data-acc="${id}"><span class="ic" data-icon="pen"></span></button>
+                <button class="btn btn--icon" data-action="delete" data-acc="${id}"><span class="ic" data-icon="trash" style="color:var(--danger)"></span></button>
+              </div>
+              <span class="svc-summary ${availCount < acc.services.length ? 'has-cd' : ''}" title="${availCount} service(s) hors cooldown sur ${acc.services.length}">${availCount}/${acc.services.length}</span>
+              <span class="ic collapse-chevron" data-icon="chevron-down" title="Replier / déplier"></span>
+            </div>
+            <div class="services-wrap"><div class="services-inner">
+              <div class="services-grid">${servicesHtml}</div>
+            </div></div>
+          </div>
+        `;
+      }).join('');
+      hydrateIcons(container); // remplit les icônes SVG des boutons éditer/supprimer
+      updateStats();
+    }
+
+    function updateStats() {
+      let activeAccounts = 0, availableIAs = 0;
+      accounts.forEach(acc => {
+        let hasAvailable = false;
+        acc.services.forEach(sid => {
+          if (!acc.cooldowns[sid] || acc.cooldowns[sid] <= Date.now()) { availableIAs++; hasAvailable = true; }
+        });
+        if (hasAvailable) activeAccounts++;
+      });
+      document.getElementById('statActive').textContent = activeAccounts;
+      document.getElementById('statAvailable').textContent = availableIAs;
+      // Oriente le chevron du bouton « Tout replier / déplier » selon l'état
+      // global (appelé dans les deux branches de renderAccounts, y c. liste vide).
+      const allBtn = document.getElementById('btnToggleAllCards');
+      if (allBtn) allBtn.classList.toggle('all-collapsed', accounts.length > 0 && accounts.every(a => collapsedAccounts.has(a.id)));
+    }
+
+    function formatCooldown(ms) {
+      const totalSec = Math.floor(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      return `⏳ ${h}h ${m.toString().padStart(2, '0')}m`;
+    }
+
+    // Layout
+    window.setLayout = function(mode, btn) {
+      layoutMode = mode;
+      document.querySelectorAll('.workspace-header .btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const pane2 = document.getElementById('pane2');
+      const resizerPane = document.getElementById('resizerPane');
+      const pane1 = document.getElementById('pane1');
+      if (mode === 2) {
+        pane2.classList.add('active');
+        if (resizerPane) resizerPane.style.display = 'block';
+      } else {
+        pane2.classList.remove('active');
+        activePaneId = 1;
+        if (resizerPane) resizerPane.style.display = 'none';
+        if (pane1) pane1.style.flex = '1'; // on rend toute la largeur au panneau unique
+      }
+    }
+
+    window.toggleDashboard = function() {
+      const dash = document.getElementById('dashboard');
+      const btnShow = document.getElementById('btnShowDashboard');
+      dash.classList.toggle('collapsed');
+      btnShow.style.display = dash.classList.contains('collapsed') ? 'flex' : 'none';
+    }
+
+    window.toggleExplorer = function() { document.getElementById('fileExplorer').classList.toggle('collapsed'); }
+    window.toggleIdePanel = function() {
+      const p = document.getElementById('idePanel');
+      p.classList.toggle('collapsed');
+      // Monaco paresseux : chargé à la 1re OUVERTURE du panneau éditeur.
+      if (!p.classList.contains('collapsed')) ensureMonacoLoaded();
+    }
+
+    window.openService = function(accId, svcId) {
+      const acc = accounts.find(a => a.id === accId);
+      const svc = SERVICES.find(s => s.id === svcId);
+      if (!acc || !svc) return;
+
+      activeAccountId = accId;
+      // Ouvrir un service (carte OU palette Ctrl+K) déplie la carte concernée :
+      // confirmation visuelle du compte utilisé même si elle était repliée.
+      if (collapsedAccounts.has(accId)) { collapsedAccounts.delete(accId); saveCollapsed(); }
+      renderAccounts();
+
+      // Vue scindée : un panneau VIDE est toujours servi en priorité (cas
+      // typique : panneau 2 fermé via « Fermer le panneau 2 » -> le prochain
+      // service le remplit au lieu d'écraser le panneau 1). Quand les deux
+      // panneaux sont occupés, l'alternance habituelle continue.
+      if (layoutMode === 2) {
+        const p1Full = !!document.querySelector('#pane1 webview');
+        const p2Full = !!document.querySelector('#pane2 webview');
+        if (p1Full && !p2Full) activePaneId = 2;
+        else if (!p1Full && p2Full) activePaneId = 1;
+      }
+
+      const pane = document.getElementById(`pane${activePaneId}`);
+      pane.innerHTML = ''; // détruit l'ancienne <webview> (le process invité Chromium est libéré)
+
+      // Feedback de chargement : spinner + nom du service/compte le temps que la
+      // page charge (avant : panneau noir muet pendant plusieurs secondes).
+      // L'animation CSS ne vit que tant que l'overlay existe -> coût nul ensuite.
+      const loading = document.createElement('div');
+      loading.className = 'pane-loading';
+      loading.innerHTML = `<div class="pane-spinner"></div><span>Connexion à ${escapeHtml(svc.name)} — ${escapeHtml(acc.name)}…</span>`;
+      pane.appendChild(loading);
+
+      const webview = document.createElement('webview');
+      webview.setAttribute('partition', `persist:${acc.profile}`);
+      webview.setAttribute('src', svc.url);
+      webview.setAttribute('allowpopups', '');
+      webview.style.width = '100%';
+      webview.style.height = '100%';
+      pane.appendChild(webview);
+
+      // Retiré au 1er rendu du service ; filet de 10 s si l'événement ne vient
+      // jamais (webview morte) pour ne jamais masquer le panneau. Si un autre
+      // service est ouvert entre-temps, innerHTML='' a déjà détaché l'overlay
+      // et le remove() différé est sans effet.
+      const clearLoading = () => loading.remove();
+      webview.addEventListener('dom-ready', clearLoading, { once: true });
+      setTimeout(clearLoading, 10000);
+
+      if (layoutMode === 2) {
+        activePaneId = activePaneId === 1 ? 2 : 1;
+      }
+      updateClosePane2Btn();
+      showToast(`${svc.name} ouvert avec ${acc.name}`);
+    }
+
+    // Bouton « Fermer le panneau 2 » : affiché seulement si une webview vit dans
+    // le panneau 2 (même cachée en vue simple — c'est justement le cas où elle
+    // consomme de la RAM en arrière-plan sans être visible).
+    function updateClosePane2Btn() {
+      const btn = document.getElementById('btnClosePane2');
+      if (btn) btn.style.display = document.querySelector('#pane2 webview') ? '' : 'none';
+    }
+
+    window.closePane2 = function() {
+      const pane2 = document.getElementById('pane2');
+      if (!pane2.querySelector('webview')) return; // rien d'ouvert : rien à faire
+      // innerHTML='' détruit la <webview> -> Electron tue le process invité
+      // Chromium et libère sa mémoire (même mécanique que le remplacement
+      // effectué par openService). On restaure le placeholder d'origine.
+      pane2.innerHTML = '<div class="pane-empty"><span class="ic" data-icon="robot"></span><span>Panneau 2 vide</span></div>';
+      hydrateIcons(pane2);
+      // (openService re-ciblera de lui-même ce panneau vide en vue scindée.)
+      updateClosePane2Btn();
+      showToast('Panneau 2 fermé (mémoire libérée)');
+    }
+
+    // Fichiers
+    window.selectLocalFolder = async function() {
+      const folderPath = await ipcRenderer.invoke('select-folder');
+      if (!folderPath) return;
+      const files = await ipcRenderer.invoke('read-directory', folderPath);
+      const list = document.getElementById('fileList');
+      // Le chemin et le nom du fichier viennent du système de fichiers : ils
+      // peuvent contenir des guillemets / caractères HTML -> échappés, et passés
+      // par data-* (lus par la délégation, chantier A) plutôt que dans un onclick.
+      list.innerHTML = files.map(f => `
+        <div class="file-item" data-path="${escapeHtml(f.path)}" data-name="${escapeHtml(f.name)}">
+          <span class="ic" data-icon="file-code" style="color: var(--fg-dim)"></span> ${escapeHtml(f.name)}
+        </div>
+      `).join('');
+      hydrateIcons(list);
+    }
+
+    window.loadFileInEditor = async function(filePath, fileName, el) {
+      const res = await ipcRenderer.invoke('read-file', filePath);
+      // Fichier trop volumineux : main renvoie un sentinel {error:'too_large'}.
+      if (res && typeof res === 'object' && res.error === 'too_large') {
+        showToast('Fichier trop volumineux pour l\'éditeur : ' + Math.round(res.size / 1048576) + ' Mo (limite : 20 Mo).', 'error');
+        return;
+      }
+      if (res === null) return; // fichier illisible (permissions, disparu…)
+      const content = res;
+
+      currentOpenFilePath = filePath;
+      document.getElementById('activeFileName').textContent = fileName;
+      
+      document.querySelectorAll('.file-item').forEach(e => e.classList.remove('active'));
+      el.classList.add('active');
+
+      const ext = fileName.split('.').pop();
+      const langMap = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', html: 'html', css: 'css', json: 'json', md: 'markdown' };
+      const lang = langMap[ext] || 'plaintext';
+
+      setEditorContent(content, lang);
+    }
+
+    // Palette
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        document.getElementById('paletteOverlay').classList.add('open');
+        document.getElementById('paletteInput').focus();
+        filterPalette();
+      }
+      if (e.key === 'Escape') {
+        document.getElementById('paletteOverlay').classList.remove('open');
+        document.getElementById('accountModal').classList.remove('open');
+        document.getElementById('deleteModal').classList.remove('open');
+        document.getElementById('helpModal').classList.remove('open');
+      }
+      if (e.key === 'Enter' && document.getElementById('paletteOverlay').classList.contains('open')) {
+        e.preventDefault();
+        const sel = document.querySelector('.palette-item.selected');
+        if (sel) sel.click();
+      }
+    });
+
+    window.filterPalette = function() {
+      const query = document.getElementById('paletteInput').value.toLowerCase();
+      const results = document.getElementById('paletteResults');
+      let items = [];
+      accounts.forEach(acc => {
+        if (acc.name.toLowerCase().includes(query) || acc.email.toLowerCase().includes(query)) {
+          acc.services.forEach(sid => {
+            const svc = SERVICES.find(s => s.id === sid);
+            if (svc) items.push({ acc, svc });
+          });
+        }
+      });
+      results.innerHTML = items.map((item, idx) => `
+        <div class="palette-item ${idx === 0 ? 'selected' : ''}" data-acc="${escapeHtml(item.acc.id)}" data-svc="${escapeHtml(item.svc.id)}">
+          <div class="account-avatar" style="background:${escapeHtml(item.acc.color)}; width:24px; height:24px; font-size:10px;">${escapeHtml(String(item.acc.name).slice(0,2))}</div>
+          <span>${escapeHtml(item.acc.name)} - ${escapeHtml(item.svc.name)}</span>
+        </div>
+      `).join('');
+    }
+
+    // Modals
+    window.openModal = function(accId = null) {
+      const modal = document.getElementById('accountModal');
+      const title = document.getElementById('modalTitle');
+      if (accId) {
+        const acc = accounts.find(a => a.id === accId);
+        title.textContent = "Modifier le compte";
+        document.getElementById('editId').value = acc.id;
+        document.getElementById('inputName').value = acc.name;
+        document.getElementById('inputEmail').value = acc.email;
+        document.getElementById('inputProfile').value = acc.profile;
+      } else {
+        title.textContent = "Ajouter un compte";
+        document.getElementById('editId').value = '';
+        document.getElementById('inputName').value = '';
+        document.getElementById('inputEmail').value = '';
+        // Suggère un profil NON collisionnant (`length+1` pouvait re-proposer un
+        // profil déjà pris après une suppression -> sessions partagées).
+        const used = new Set(accounts.map(a => a.profile));
+        let n = accounts.length + 1;
+        while (used.has('profil_' + n)) n++;
+        document.getElementById('inputProfile').value = 'profil_' + n;
+      }
+      modal.classList.add('open');
+    }
+    window.closeModal = function() { document.getElementById('accountModal').classList.remove('open'); }
+
+    // Modale d'aide « Comprendre les IA disponibles ». Liste régénérée à chaque
+    // ouverture depuis SERVICES + SERVICE_INFO : un 10e service apparaîtra tout
+    // seul (avec son nom au minimum si sa fiche SERVICE_INFO manque encore).
+    // Purement informatif : ne touche ni comptes, ni cooldowns, ni webviews.
+    window.openHelpModal = function() {
+      const list = document.getElementById('helpList');
+      // Contenu 100% statique (SERVICES + SERVICE_INFO codés en dur) -> sûr,
+      // mais on garde escapeHtml par cohérence avec le reste du rendu.
+      list.innerHTML = SERVICES.map(svc => {
+        const info = SERVICE_INFO[svc.id];
+        return `
+          <div class="help-entry">
+            <div class="help-entry__name"><span class="help-entry__dot" style="background:var(--${svc.id})"></span>${escapeHtml(svc.name)}</div>
+            ${info ? `
+              <div class="help-entry__line"><span class="help-entry__label">C'est quoi ?</span> ${escapeHtml(info.what)}</div>
+              <div class="help-entry__line"><span class="help-entry__label">Quand l'utiliser ?</span> ${escapeHtml(info.when)}</div>
+            ` : `<div class="help-entry__line" style="color:var(--fg-muted)">Description à venir.</div>`}
+          </div>
+        `;
+      }).join('');
+      document.getElementById('helpModal').classList.add('open');
+    }
+    window.closeHelpModal = function() { document.getElementById('helpModal').classList.remove('open'); }
+    // Fermeture par clic en dehors de la boîte (sur le fond assombri).
+    document.getElementById('helpModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeHelpModal();
+    });
+
+    // Suppression de compte
+    window.openDeleteModal = function(accId) {
+      const acc = accounts.find(a => a.id === accId);
+      if (!acc) return;
+      document.getElementById('deleteId').value = accId;
+      document.getElementById('deleteDesc').textContent =
+        `Supprimer « ${acc.name} » (${acc.email}) ? La session restera stockée sur le disque, mais le compte disparaîtra de la liste.`;
+      document.getElementById('deleteModal').classList.add('open');
+    }
+    window.closeDeleteModal = function() { document.getElementById('deleteModal').classList.remove('open'); }
+    window.confirmDelete = function() {
+      const id = document.getElementById('deleteId').value;
+      accounts = accounts.filter(a => a.id !== id);
+      if (activeAccountId === id) activeAccountId = null;
+      saveCollapsed();        // purge l'état de repli du compte supprimé
+      saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
+      renderAccounts();
+      closeDeleteModal();
+      showToast('Compte supprimé');
+    }
+
+    window.saveAccount = function() {
+      const id = document.getElementById('editId').value;
+      const name = document.getElementById('inputName').value.trim();
+      const email = document.getElementById('inputEmail').value.trim();
+      const profile = document.getElementById('inputProfile').value.trim();
+      if (!name || !email || !profile) return showToast('Remplissez tous les champs', 'error');
+
+      // Unicité du profil (chantier audit 3.1) : deux comptes partageant le même
+      // `profile` utiliseraient la MÊME partition Electron (persist:<profile>) →
+      // cookies/sessions mêlés entre comptes. On refuse la collision.
+      if (accounts.some(a => a.id !== id && a.profile === profile)) {
+        return showToast('Ce profil est déjà utilisé par un autre compte (les sessions seraient partagées).', 'error');
+      }
+
+      if (id) {
+        const acc = accounts.find(a => a.id === id);
+        if (!acc) return; // garde : id obsolète
+        Object.assign(acc, { name, email, profile });
+        showToast('Compte mis à jour');
+      } else {
+        accounts.push({
+          id: 'acc_' + Date.now(), name, email, profile,
+          color: COLORS[accounts.length % COLORS.length],
+          services: SERVICES.map(s => s.id),
+          cooldowns: Object.fromEntries(SERVICES.map(s => [s.id, 0]))
+        });
+        showToast('Compte ajouté');
+      }
+      saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
+      renderAccounts();
+      closeModal();
+    }
+
+    window.toggleCooldown = function(accId, svcId) {
+      const acc = accounts.find(a => a.id === accId);
+      if (!acc) return; // garde : id obsolète (chantier audit 3.7)
+      const currentCd = acc.cooldowns[svcId] || 0;
+      acc.cooldowns[svcId] = currentCd > Date.now() ? 0 : Date.now() + 86400000;
+      saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
+      renderAccounts();
+    }
+
+    function showToast(msg, type = 'success') {
+      const toast = document.createElement('div');
+      toast.className = `toast`;
+      toast.style.borderLeftColor = type === 'error' ? 'var(--danger)' : type === 'warning' ? 'var(--warning)' : 'var(--accent)';
+      const iconName = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'exclamation-triangle';
+      // msg peut contenir une donnée utilisateur (ex. nom de compte) -> échappé (chantier A).
+      toast.innerHTML = `<span class="ic" data-icon="${iconName}"></span> ${escapeHtml(msg)}`;
+      hydrateIcons(toast);
+      document.getElementById('toastContainer').appendChild(toast);
+      setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(100%)'; setTimeout(() => toast.remove(), 300); }, 3000);
+    }
+
+    // Colonnes redimensionnables à la souris
+    function setupResizers() {
+      const overlay = document.getElementById('resizeOverlay');
+      const idePanel = document.getElementById('idePanel');
+      const fileExplorer = document.getElementById('fileExplorer');
+      const pane1 = document.getElementById('pane1');
+
+      // On lève les limites CSS qui empêcheraient d'agrandir/réduire librement.
+      idePanel.style.maxWidth = 'none';
+      idePanel.style.minWidth = '0';
+      fileExplorer.style.maxWidth = 'none';
+      fileExplorer.style.minWidth = '0';
+
+      // Restaure les largeurs mémorisées (via flex-basis = taille exacte).
+      // Lecture défensive (chantier C) : une valeur absente/illisible ne doit
+      // jamais empêcher l'app de démarrer — on retombe simplement sur le défaut.
+      try {
+        const savedIde = localStorage.getItem('ide_w');
+        if (savedIde) idePanel.style.flex = '0 0 ' + savedIde;
+        const savedExp = localStorage.getItem('explorer_w');
+        if (savedExp) fileExplorer.style.flex = '0 0 ' + savedExp;
+      } catch (e) { console.warn('[storage] largeurs de colonnes ignorées :', e); }
+
+      function makeResizer(resizer, opts) {
+        if (!resizer) return;
+        resizer.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const startX = e.clientX;
+          const startSize = opts.getStart();
+          resizer.classList.add('dragging');
+          overlay.classList.add('active');
+          document.body.style.userSelect = 'none';
+
+          function move(ev) {
+            const max = typeof opts.max === 'function' ? opts.max() : opts.max;
+            let next = startSize + (ev.clientX - startX);
+            next = Math.max(opts.min, Math.min(max, next));
+            opts.apply(next);
+          }
+          function up() {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', up);
+            resizer.classList.remove('dragging');
+            overlay.classList.remove('active');
+            document.body.style.userSelect = '';
+            if (opts.onEnd) opts.onEnd();
+          }
+          document.addEventListener('mousemove', move);
+          document.addEventListener('mouseup', up);
+        });
+      }
+
+      // Éditeur (largeur du panneau IDE) ↔ panneaux IA
+      makeResizer(document.getElementById('resizerIde'), {
+        el: idePanel,
+        getStart: () => idePanel.getBoundingClientRect().width,
+        min: 260,
+        max: () => document.querySelector('.workspace-body').getBoundingClientRect().width - 320,
+        apply: (w) => { idePanel.style.flex = '0 0 ' + w + 'px'; },
+        onEnd: () => { try { localStorage.setItem('ide_w', Math.round(idePanel.getBoundingClientRect().width) + 'px'); } catch (e) {} }
+      });
+
+      // Explorateur de fichiers ↔ éditeur
+      makeResizer(document.getElementById('resizerExplorer'), {
+        el: fileExplorer,
+        getStart: () => fileExplorer.getBoundingClientRect().width,
+        min: 120,
+        max: () => idePanel.getBoundingClientRect().width - 160,
+        apply: (w) => { fileExplorer.style.flex = '0 0 ' + w + 'px'; },
+        onEnd: () => { try { localStorage.setItem('explorer_w', Math.round(fileExplorer.getBoundingClientRect().width) + 'px'); } catch (e) {} }
+      });
+
+      // Panneau IA 1 ↔ panneau IA 2 (vue scindée)
+      makeResizer(document.getElementById('resizerPane'), {
+        el: pane1,
+        getStart: () => pane1.getBoundingClientRect().width,
+        min: 200,
+        max: () => document.getElementById('webviewArea').getBoundingClientRect().width - 220,
+        apply: (w) => { pane1.style.flex = '0 0 ' + w + 'px'; }
+      });
+    }
+    setupResizers();
+
+    // --- Délégation d'événements (chantier A) ---
+    // Les listes rendues dynamiquement (comptes, palette, fichiers) n'ont plus
+    // d'attributs onclick. On écoute UN seul clic sur chaque conteneur STABLE et
+    // on lit l'action + les identifiants dans les data-*. Le vecteur d'injection
+    // (valeur utilisateur interpolée dans un onclick) disparaît complètement.
+    document.getElementById('accountsList').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const accId = btn.getAttribute('data-acc');
+      const svcId = btn.getAttribute('data-svc');
+      switch (btn.getAttribute('data-action')) {
+        case 'add':             openModal(); break;
+        case 'open-service':    openService(accId, svcId); break;
+        case 'toggle-cooldown': toggleCooldown(accId, svcId); break;
+        case 'edit':            openModal(accId); break;
+        case 'delete':          openDeleteModal(accId); break;
+        case 'toggle-collapse': toggleCardCollapse(accId); break;
+      }
+    });
+
+    document.getElementById('paletteResults').addEventListener('click', (e) => {
+      const item = e.target.closest('[data-acc]');
+      if (!item) return;
+      openService(item.getAttribute('data-acc'), item.getAttribute('data-svc'));
+      document.getElementById('paletteOverlay').classList.remove('open');
+    });
+
+    document.getElementById('fileList').addEventListener('click', (e) => {
+      const item = e.target.closest('.file-item');
+      if (!item) return;
+      loadFileInEditor(item.getAttribute('data-path'), item.getAttribute('data-name'), item);
+    });
+
+    // Rafraîchit UNIQUEMENT le texte des compteurs « ⏳ Xh YYm » en cours, par
+    // textContent (aucun innerHTML, aucune hydratation d'icônes) : bien moins
+    // cher qu'un renderAccounts() complet (mesuré ~50x), pour un affichage
+    // identique — le format du décompte est à la minute près.
+    function refreshCooldownLabels() {
+      const now = Date.now();
+      document.querySelectorAll('#accountsList [data-action="toggle-cooldown"]').forEach(btn => {
+        const acc = accounts.find(a => a.id === btn.getAttribute('data-acc'));
+        if (!acc) return;
+        const cd = acc.cooldowns[btn.getAttribute('data-svc')] || 0;
+        if (cd > now) btn.textContent = formatCooldown(cd - now);
+      });
+    }
+
+    // Tick cooldowns (1 s) : remet à 0 les cooldowns expirés (seul cas de
+    // re-render complet : il faut réactiver le bouton de service) et, au
+    // changement de minute (le format du décompte est à la minute), met à jour
+    // les libellés via refreshCooldownLabels() — même ponctualité qu'avant
+    // (lag ≤ 1 s), mais sans reconstruire tout le DOM de la liste.
+    // Coût d'un tick sans cooldown actif : boucle comptes x services pure (µs).
+    let lastCdMinute = -1;
+    setInterval(() => {
+      const now = Date.now();
+      let needsRender = false, anyActive = false;
+      accounts.forEach(acc => {
+        SERVICES.forEach(svc => {
+          const cd = acc.cooldowns[svc.id];
+          if (!cd) return;
+          if (cd <= now) { acc.cooldowns[svc.id] = 0; needsRender = true; }
+          else anyActive = true;
+        });
+      });
+      const minute = Math.floor(now / 60000);
+      if (needsRender) renderAccounts();
+      else if (anyActive && minute !== lastCdMinute) refreshCooldownLabels();
+      lastCdMinute = minute;
+    }, 1000);
+
+    renderAccounts();
+
+    // Récupération des données (chantier C) : si ai_accounts était illisible au
+    // démarrage, on propose de restaurer la sauvegarde plutôt que de perdre en
+    // silence les comptes de l'utilisateur.
+    if (dataCorrupt) showRecoveryUI();
+
+    // Construit et affiche la modale de récupération. Restaure depuis
+    // ai_accounts_backup si un backup valide existe, sinon informe simplement.
+    // (Fonction déclarée -> hoistée, l'appel ci-dessus la voit.)
+    function showRecoveryUI() {
+      const b = readJSON(BACKUP_KEY);
+      const hasBackup = b.status === 'ok' && Array.isArray(b.data);
+
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay open';
+      const box = document.createElement('div');
+      box.className = 'modal';
+
+      const title = document.createElement('div');
+      title.className = 'modal__title';
+      title.textContent = 'Données de comptes illisibles';
+
+      const desc = document.createElement('div');
+      desc.style.cssText = 'color:var(--fg-muted); font-size:13px; margin:8px 0 4px;';
+      // textContent (pas innerHTML) : aucune donnée n'est interprétée en HTML.
+      desc.textContent = hasBackup
+        ? `La liste de comptes enregistrée est corrompue. Une sauvegarde de ${b.data.length} compte(s) a été trouvée. La restaurer ?`
+        : "La liste de comptes enregistrée est corrompue et aucune sauvegarde n'est disponible. L'application démarre avec une liste vide ; vos données actuelles ne seront pas écrasées tant que vous ne créez ou ne modifiez pas de compte.";
+
+      const actions = document.createElement('div');
+      actions.className = 'modal__actions';
+      const close = () => overlay.remove();
+
+      if (hasBackup) {
+        const cancel = document.createElement('button');
+        cancel.className = 'btn';
+        cancel.textContent = 'Ignorer';
+        cancel.addEventListener('click', close);
+
+        const restore = document.createElement('button');
+        restore.className = 'btn btn--primary';
+        restore.textContent = 'Restaurer la sauvegarde';
+        restore.addEventListener('click', () => {
+          accounts = b.data;
+          migrateOldAccounts();   // complète/répare les comptes restaurés
+          saveAccounts(accounts); // saveAccounts préserve le backup (valeur actuelle illisible)
+          renderAccounts();
+          close();
+          showToast('Comptes restaurés depuis la sauvegarde');
+        });
+        actions.appendChild(cancel);
+        actions.appendChild(restore);
+      } else {
+        const ok = document.createElement('button');
+        ok.className = 'btn btn--primary';
+        ok.textContent = 'Compris';
+        ok.addEventListener('click', close);
+        actions.appendChild(ok);
+      }
+
+      box.appendChild(title);
+      box.appendChild(desc);
+      box.appendChild(actions);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    }
+  }
+</script>
+</body>
+</html>

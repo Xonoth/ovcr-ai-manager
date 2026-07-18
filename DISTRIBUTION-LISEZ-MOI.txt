@@ -1,0 +1,114 @@
+========================================================
+  [OVCR] AI Manager  -  Guide de demarrage
+  Poste de travail multi-comptes pour les IA web
+  (Claude, ChatGPT, Gemini, Perplexity, Z.ai, Grok,
+   Leonardo AI, Suno, Meshy AI)
+========================================================
+
+Merci d'utiliser [OVCR] AI Manager, un outil de la communaute OverCreep.
+Ce fichier repond aux 3 questions les plus courantes. Lis-le une fois
+avant de lancer l'application.
+
+
+--------------------------------------------------------
+1. COMMENT LANCER L'APPLICATION
+--------------------------------------------------------
+
+1) Dezippe le dossier EN ENTIER quelque part sur ton disque
+   (par exemple dans "Documents" ou sur le Bureau).
+
+   -> Ne lance PAS l'application depuis l'interieur du .zip.
+   -> Ne deplace PAS "[OVCR] AI Manager.exe" tout seul : il a besoin
+      de TOUS les fichiers du dossier a cote de lui pour fonctionner.
+
+2) Ouvre le dossier "[OVCR] AI Manager-win32-x64".
+
+3) Double-clique sur :  [OVCR] AI Manager.exe
+
+C'est tout. L'application ne s'installe pas : elle se lance directement
+depuis le dossier. Pour la desinstaller, il suffit de supprimer le dossier.
+
+Astuce : clic droit sur le .exe -> "Epingler a la barre des taches"
+pour le relancer facilement ensuite.
+
+
+--------------------------------------------------------
+2. AVERTISSEMENT WINDOWS AU PREMIER LANCEMENT (NORMAL)
+--------------------------------------------------------
+
+Au premier lancement, Windows peut afficher une fenetre bleue :
+
+   "Windows a protege votre ordinateur"
+   "Microsoft Defender SmartScreen a empeche le demarrage d'une
+    application non reconnue."
+
+C'est NORMAL et sans danger. Ce message apparait simplement parce que
+l'application n'est pas signee avec un certificat commercial (payant).
+Ce n'est pas un virus, c'est le comportement standard de Windows pour
+toute petite application independante.
+
+Pour lancer quand meme :
+
+   1) Clique sur "Informations complementaires" (ou "Plus d'infos")
+   2) Clique sur le bouton "Executer quand meme"
+
+Tu n'auras cet avertissement qu'UNE SEULE FOIS. Les lancements suivants
+se feront sans rien demander.
+
+(Si ton antivirus rale, meme raison : application non signee. Tu peux
+l'autoriser en confiance ou demander de l'aide sur le canal OverCreep.)
+
+
+--------------------------------------------------------
+3. IMPORTANT : UN COMPTE WINDOWS PAR PERSONNE
+--------------------------------------------------------
+
+L'application memorise tes connexions aux IA (Claude, ChatGPT, etc.) pour
+ne pas avoir a te reconnecter a chaque fois. Ces sessions sont stockees
+sur le disque, dans ton dossier utilisateur Windows :
+
+   %APPDATA%\ai-manager
+
+>>> Ces sessions ne sont PAS chiffrees. <<<
+
+Consequence a connaitre :
+
+  - Sur TON PC personnel (ta propre session Windows) : aucun souci,
+    personne d'autre n'y a acces.
+
+  - Sur un PC PARTAGE (PC familial, poste commun...) : n'utilise
+    l'application QUE dans TA propre session Windows. Si plusieurs
+    personnes se connectent sous LE MEME compte Windows, elles
+    partageront les memes sessions IA (chacun verrait les comptes
+    de l'autre).
+
+Regle simple : une session Windows = une personne. C'est deja le cas
+sur la plupart des PC ; ne partage pas ton compte Windows si tu tiens
+a l'isolement de tes comptes IA.
+
+
+--------------------------------------------------------
+BON A SAVOIR
+--------------------------------------------------------
+
+- Connexion Internet requise : les IA sont des services web, il faut
+  etre en ligne pour les utiliser (l'interface, elle, fonctionne meme
+  hors-ligne).
+
+- Plusieurs comptes : tu peux ajouter plusieurs comptes (ex. plusieurs
+  adresses Gmail). Chaque compte utilise un "profil" isole -> ses
+  cookies/sessions sont separes des autres. Ne donne jamais le meme
+  nom de "profil" a deux comptes (l'application t'en empechera).
+
+- Premiere utilisation : clique sur "Creer mon premier compte", renseigne
+  un nom, un email et un profil, puis clique sur une IA pour l'ouvrir et
+  te connecter normalement.
+
+- Tes donnees restent sur TA machine. L'application n'envoie rien a la
+  communaute ni a un serveur OverCreep ; elle ouvre juste les sites des
+  IA dans des panneaux isoles.
+
+
+--------------------------------------------------------
+Besoin d'aide ? -> canal de la communaute OverCreep.
+========================================================
