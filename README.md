@@ -53,7 +53,7 @@ npm run dist
 
 Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet — pour distribuer, zippez tout le dossier). Le script purge automatiquement les locales Chromium inutilisées et les traductions Monaco (−46 Mo).
 
-**Limitation connue** : le packaging utilise `@electron/packager`. `electron-builder` (présent en devDependency) ne fonctionne pas sans droits administrateur ou Mode développeur Windows (création de liens symboliques) — c'est pourquoi il n'y a ni installateur ni exe portable mono-fichier.
+**Limitation connue** : le packaging utilise `@electron/packager`. `electron-builder` ne fonctionne pas sans droits administrateur ou Mode développeur Windows (création de liens symboliques) — c'est pourquoi il n'y a ni installateur ni exe portable mono-fichier, et pourquoi il n'est plus installé (seule sa config `build` reste dans `package.json`).
 
 ## Structure du projet
 

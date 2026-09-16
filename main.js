@@ -7,6 +7,32 @@ const fsPromises = require('fs').promises;
 // existant au lieu d'en créer un vierge.
 app.setPath('userData', path.join(app.getPath('appData'), 'ai-manager'));
 
+// ===== User-agent : on retire le marqueur "Electron/x.y.z" =====
+// Par défaut Electron annonce :
+//   ... Chrome/150.0.7871.114 Electron/43.1.1 Safari/537.36
+// Or les pages de connexion Google (accounts.google.com, y compris quand on
+// passe par "Continuer avec Google" depuis Claude/Meshy/Suno) refusent les
+// navigateurs embarqués : "Ce navigateur ou cette application ne sont peut-être
+// pas sécurisés". Le jeton "Electron/" est le signal le plus visible, et il est
+// en plus INCOHÉRENT avec les client hints (Sec-CH-UA), que Chromium remplit de
+// son côté avec "Chromium" tout court — une signature contradictoire ne fait
+// qu'augmenter le score de risque.
+// On annonce donc exactement ce qu'annonce un Chrome de bureau : même version
+// majeure que le Chromium réellement embarqué, minor/build/patch à 0 (Chrome
+// "réduit" son UA depuis la v110, donc 150.0.0.0 et non 150.0.7871.114).
+// `userAgentFallback` s'applique à TOUTES les sessions : fenêtre hôte, chaque
+// <webview> (persist:<profil>) et les popups OAuth qu'elles ouvrent. À définir
+// avant la création de la moindre fenêtre, donc ici au chargement du module.
+const UA_PLATFORM = process.platform === 'darwin'
+  ? 'Macintosh; Intel Mac OS X 10_15_7'
+  : process.platform === 'linux'
+    ? 'X11; Linux x86_64'
+    : 'Windows NT 10.0; Win64; x64';
+const CHROME_MAJOR = process.versions.chrome.split('.')[0];
+app.userAgentFallback =
+  `Mozilla/5.0 (${UA_PLATFORM}) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+  `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
+
 // ===== Durcissement navigation / popups (chantier B) =====
 // Origines de confiance autorisées à ouvrir une popup depuis une <webview>.
 // On y met les 9 services + les fournisseurs d'identité courants pour que les

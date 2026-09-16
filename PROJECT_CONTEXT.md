@@ -17,11 +17,11 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 
 ## 2. Stack technique
 
-- **Electron** `^43.1.1` (app desktop, un process principal + un renderer).
+- **Electron** `^43.7.1` (app desktop, un process principal + un renderer).
 - **HTML/CSS/JS vanilla** — pas de framework (pas de React/Vue). Tout le front est dans un seul fichier `index.html` (+ un petit `assets/icons.js` pour les icônes).
 - **Monaco Editor** `^0.45.0` (l'éditeur de VS Code), chargé en local depuis `node_modules`.
 - **Polices & icônes 100% LOCALES** (plus aucun CDN externe) : polices Google Fonts en `.woff2` sous `assets/fonts/`, icônes ex-Font Awesome converties en **SVG inline** dans `assets/icons.js`. L'app s'affiche donc identiquement hors-ligne.
-- **Packaging** : `@electron/packager` (génère un dossier + `.exe`). `electron-builder` est présent dans les devDependencies mais **ne fonctionne pas sur cette machine** (il exige des droits admin/Mode développeur pour créer des liens symboliques ; on utilise donc `@electron/packager`).
+- **Packaging** : `@electron/packager` (génère un dossier + `.exe`). `electron-builder` a été **retiré des devDependencies** (septembre 2026) : il **ne fonctionne pas sur cette machine** (il exige des droits admin/Mode développeur pour créer des liens symboliques) et traînait 11 alertes `npm audit` dont une critique. Le bloc `build` de `package.json` (config electron-builder) est **conservé** : il ne coûte rien et servira tel quel si on réinstalle l'outil un jour.
 - Pas de TypeScript, pas de bundler (Webpack/Vite), pas de tests automatisés.
 
 ## 3. Structure des fichiers
@@ -173,7 +173,7 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 - Pas de tests automatisés dans le repo. *(Les fonctions pures du lot A/B/C — `escapeHtml`, `isAllowedPopup`, `readJSON`/`saveAccounts` — ont été validées par un script de test ponctuel hors repo, non conservé.)*
 - ~~Icônes/polices dépendent d'Internet (CDN).~~ **Corrigé** : tout est local (`assets/`).
 - `.exe` non signé (avertissement SmartScreen).
-- `electron-builder` inutilisable ici (droits symlinks) → on ne peut pas produire un vrai portable mono-fichier ni un installateur sans activer le Mode développeur Windows ou lancer en admin.
+- `electron-builder` inutilisable ici (droits symlinks) → on ne peut pas produire un vrai portable mono-fichier ni un installateur sans activer le Mode développeur Windows ou lancer en admin. Il n'est donc plus installé (voir §2) ; seule sa config `build` reste dans `package.json`.
 
 ## 12. Idées d'évolutions possibles (non demandées, à titre indicatif)
 
@@ -227,6 +227,41 @@ Mesures faites dans un harnais navigateur (stub Electron, 15 comptes × 9 servic
 - **Arbitrages tranchés (décision utilisateur)** : la webview du panneau 2 reste en vie par défaut quand on repasse en vue simple (session préservée), mais un bouton **« Fermer le panneau 2 »** permet de la détruire explicitement pour libérer la RAM (voir §7) ; `backdrop-filter` (flou) et animation `logoGlow` **conservés tels quels** — pas de sacrifice visuel préventif ; correctif d'une ligne en réserve si un membre signale un scroll saccadé après diffusion : retirer `backdrop-filter` des `.account-card`.
 
 ---
+
+### Connexion Google bloquée en webview (septembre 2026)
+
+Symptôme : à l'ajout d'un compte, la popup « Continuer avec Google » (Claude,
+Meshy, Suno…) affiche **« Impossible de vous connecter — Ce navigateur ou cette
+application ne sont peut-être pas sécurisés »**.
+
+- **Cause** : Google refuse les connexions faites depuis un navigateur embarqué
+  (`disallowed_useragent`). L'UA par défaut d'Electron contenait le jeton
+  `Electron/43.1.1`, alors que les client hints (`Sec-CH-UA`) annonçaient
+  « Chromium » tout court : signature à la fois embarquée **et** incohérente.
+- **Correctif** (`main.js`, tout en haut) : `app.userAgentFallback` est forcé sur
+  un UA Chrome de bureau standard — `Chrome/<major>.0.0.0`, version majeure du
+  Chromium réellement embarqué, UA « réduit » comme le fait Chrome depuis la
+  v110. S'applique à l'hôte, à toutes les `<webview>` et aux popups OAuth.
+- **Vérifié** : flux réel Claude → « Continuer avec Google » dans une `<webview>`
+  avec popup ; la page d'identification Google s'affiche normalement.
+- **Limite** : le blocage de Google est **basé sur le risque**, pas seulement sur
+  l'UA (IP, nombre de comptes enchaînés sur la même machine, protection avancée
+  du compte…). Si le message revient malgré tout sur un compte donné, le
+  contournement fiable est de se connecter au service **par e-mail + code**
+  plutôt que par « Continuer avec Google ».
+
+Dans la foulée (même lot, sans rapport avec le bug) :
+
+- **Electron `43.1.1` → `43.7.1`** (Chromium 150.0.7871.250) : patchs de sécurité
+  Chromium uniquement, aucune rupture. Démarrage dev + `.exe` packagé vérifiés.
+- **`electron-builder` retiré** des devDependencies (inutilisable ici, cf. §2) et
+  **`@electron/packager` `20.0.3` → `20.3.0`** + `npm audit fix` : on passe de
+  **12 alertes (11 hautes + 1 critique) à 0**. Toutes venaient d'outils de build
+  (`tar`, `js-yaml`, `undici`, `brace-expansion`) — rien n'était embarqué dans
+  l'app livrée, mais autant ne pas laisser de bruit dans l'audit.
+- **Build régénéré** : dossier `dist/[OVCR] AI Manager-win32-x64` = **327 Mo**
+  (contre ~313 Mo, Electron 43.7.1 étant un peu plus gros), purge des locales
+  toujours active (52 supprimées, 44,9 Mo).
 
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (quasiment toujours `index.html`, parfois `main.js`), rappelle que c'est du **JS vanilla dans un `<script>`** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
