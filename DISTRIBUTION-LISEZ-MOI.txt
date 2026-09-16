@@ -20,6 +20,10 @@ avant de lancer l'application.
    -> Ne lance PAS l'application depuis l'interieur du .zip.
    -> Ne deplace PAS "[OVCR] AI Manager.exe" tout seul : il a besoin
       de TOUS les fichiers du dossier a cote de lui pour fonctionner.
+   -> Choisis un dossier au chemin COURT (Documents, Bureau, C:\Apps...).
+      Le zip contient des fichiers tres profonds : si le dossier de
+      destination depasse ~110 caracteres, Windows refuse d'extraire
+      une partie des fichiers (limite des 260 caracteres).
 
 2) Ouvre le dossier "[OVCR] AI Manager-win32-x64".
 

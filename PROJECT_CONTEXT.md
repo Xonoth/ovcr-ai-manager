@@ -56,7 +56,7 @@ ai-manager/
 - **Lancer en dev** : `npm start` (= `electron .`)
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager.zip` (~129 Mo, contient le dossier complet à la racine).
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine).
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -262,6 +262,15 @@ Dans la foulée (même lot, sans rapport avec le bug) :
 - **Build régénéré** : dossier `dist/[OVCR] AI Manager-win32-x64` = **327 Mo**
   (contre ~313 Mo, Electron 43.7.1 étant un peu plus gros), purge des locales
   toujours active (52 supprimées, 44,9 Mo).
+- **Zip de distribution régénéré** : `dist/OVCR-AI-Manager.zip`, **135,7 Mo**
+  (contre ~129 Mo). Vérifié en conditions réelles : dézippé dans un dossier
+  neuf, 130 fichiers extraits (= le compte exact du dossier source), `.exe`
+  lancé depuis l'extraction, l'app démarre sans erreur.
+- **Piège repéré au passage** : le chemin interne le plus long du zip fait
+  142 caractères (`…/monaco-editor/min/vs/basic-languages/restructuredtext/`).
+  Dézippé dans un dossier déjà profond, Windows refuse silencieusement une
+  partie des fichiers (limite MAX_PATH 260). Avertissement ajouté au
+  `DISTRIBUTION-LISEZ-MOI.txt` : extraire dans un chemin court.
 
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (quasiment toujours `index.html`, parfois `main.js`), rappelle que c'est du **JS vanilla dans un `<script>`** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
