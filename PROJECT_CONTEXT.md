@@ -44,7 +44,7 @@ ai-manager/
 ├── .gitignore          # Exclut node_modules/, dist/, harnais de test, .env
 ├── node_modules/
 │   └── monaco-editor/  # embarqué dans l'app
-└── dist/               # sorties de build (généré par `npm run dist`) + OVCR-AI-Manager.zip (à distribuer) — NON versionné
+└── dist/               # sorties de build (généré par `npm run dist`) + OVCR-AI-Manager-<version>.zip (à distribuer) — NON versionné
 ```
 
 - **Tout le code applicatif (UI, logique comptes, éditeur, redimensionnement) est dans `index.html`**, dans une grande fonction `initApp()`.
@@ -56,7 +56,7 @@ ai-manager/
 - **Lancer en dev** : `npm start` (= `electron .`)
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine).
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.1.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -64,7 +64,7 @@ ai-manager/
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.1.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -262,7 +262,7 @@ Dans la foulée (même lot, sans rapport avec le bug) :
 - **Build régénéré** : dossier `dist/[OVCR] AI Manager-win32-x64` = **327 Mo**
   (contre ~313 Mo, Electron 43.7.1 étant un peu plus gros), purge des locales
   toujours active (52 supprimées, 44,9 Mo).
-- **Zip de distribution régénéré** : `dist/OVCR-AI-Manager.zip`, **135,7 Mo**
+- **Zip de distribution régénéré** : `dist/OVCR-AI-Manager-1.0.1.zip`, **135,7 Mo**
   (contre ~129 Mo). Vérifié en conditions réelles : dézippé dans un dossier
   neuf, 130 fichiers extraits (= le compte exact du dossier source), `.exe`
   lancé depuis l'extraction, l'app démarre sans erreur.
@@ -271,6 +271,12 @@ Dans la foulée (même lot, sans rapport avec le bug) :
   Dézippé dans un dossier déjà profond, Windows refuse silencieusement une
   partie des fichiers (limite MAX_PATH 260). Avertissement ajouté au
   `DISTRIBUTION-LISEZ-MOI.txt` : extraire dans un chemin court.
+- **Version 1.0.0 → 1.0.1** (`package.json` + `--app-version` du script `dist`) :
+  le zip déjà diffusé à la communauté portait 1.0.0 **sans** le correctif Google.
+  Sans bump, deux binaires différents auraient circulé sous le même numéro ; là,
+  un membre ouvre les propriétés du `.exe` et sait tout de suite ce qu'il a.
+  Publié en **release GitHub `v1.0.1`** avec le zip en pièce jointe — c'est
+  désormais le canal de téléchargement de référence.
 
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (quasiment toujours `index.html`, parfois `main.js`), rappelle que c'est du **JS vanilla dans un `<script>`** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
