@@ -30,6 +30,7 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 ai-manager/
 ├── index.html          # TOUTE l'app : HTML + CSS (<style>) + JS (<script>). ~1285 lignes.
 ├── main.js             # Process principal Electron (~155 lignes). Fenêtre + IPC fichiers + durcissement navigation/popups.
+├── chrome-identity.js  # Identité « Google Chrome » cohérente (UA, Sec-CH-UA, userAgentData) pour webviews/popups — connexion Google.
 ├── scripts/
 │   └── prune-locales.js # Post-build : supprime les locales Chromium inutiles (garde fr/en-US/en-GB), lancé par `npm run dist`
 ├── assets/
@@ -56,7 +57,7 @@ ai-manager/
 - **Lancer en dev** : `npm start` (= `electron .`)
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.1.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.2.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -64,7 +65,7 @@ ai-manager/
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.1.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.2.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -244,6 +245,27 @@ application ne sont peut-être pas sécurisés »**.
   v110. S'applique à l'hôte, à toutes les `<webview>` et aux popups OAuth.
 - **Vérifié** : flux réel Claude → « Continuer avec Google » dans une `<webview>`
   avec popup ; la page d'identification Google s'affiche normalement.
+- **Récidive (novembre 2026) → correctif complet** (`chrome-identity.js`,
+  installé en tête de `main.js`) : l’UA seul ne suffisait plus. Diagnostic sur
+  Electron 43.7.1 : `navigator.userAgentData.brands` = `["Not;A=Brand",
+  "Chromium"]` (pas de « Google Chrome ») et **aucun en-tête `Sec-CH-UA`**
+  envoyé, alors qu’un vrai Chrome en envoie toujours sur HTTPS. Le module :
+  1. garde `app.userAgentFallback` (UA Chrome réduit) comme filet ;
+  2. sur chaque `<webview>` et chaque popup (`web-contents-created`), attache
+     le `debugger` et appelle `Emulation.setUserAgentOverride` avec des
+     `userAgentMetadata` complètes (marques GREASE + Chromium + Google Chrome
+     dans l’ordre calculé par Chromium, fullVersionList, platformVersion…) →
+     `navigator.userAgentData` identique à Chrome ; réappliqué à la fermeture
+     des DevTools d’un panneau ;
+  3. via `session-created` → `webRequest`, ajoute `Sec-CH-UA`,
+     `-Mobile`, `-Platform` à toute requête HTTPS, plus les hints haute
+     entropie aux origines qui les demandent par `Accept-CH`.
+  Vérifié (harnais Electron + httpbin) dans une webview **et** sa popup. Seul
+  `webRequest.onBeforeSendHeaders/onHeadersReceived` par session : ne pas
+  en enregistrer un autre ailleurs sans fusionner (Electron n’en garde qu’un).
+  Livré en **version 1.0.2** (`package.json` + `--app-version`), zip
+  `dist/OVCR-AI-Manager-1.0.2.zip` (135,7 Mo) ; `.exe` packagé vérifié
+  (FileVersion 1.0.2, `chrome-identity.js` présent dans `app.asar`, démarrage OK).
 - **Limite** : le blocage de Google est **basé sur le risque**, pas seulement sur
   l'UA (IP, nombre de comptes enchaînés sur la même machine, protection avancée
   du compte…). Si le message revient malgré tout sur un compte donné, le

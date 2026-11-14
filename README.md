@@ -61,6 +61,7 @@ Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet �
 ai-manager/
 ├── index.html              # Toute l'app : HTML + CSS + JS vanilla (~1300 lignes)
 ├── main.js                 # Process principal Electron : fenêtre, IPC fichiers, durcissement navigation/popups
+├── chrome-identity.js      # Se présente comme Google Chrome (UA + client hints) pour la connexion Google
 ├── assets/
 │   ├── icons.js            # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
 │   └── fonts/              # Polices WOFF2 locales (Space Grotesk, Inter, JetBrains Mono)
