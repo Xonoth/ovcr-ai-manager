@@ -7,12 +7,12 @@ const fsPromises = require('fs').promises;
 // existant au lieu d'en créer un vierge.
 app.setPath('userData', path.join(app.getPath('appData'), 'ai-manager'));
 
-// ===== Identité navigateur : se présenter comme un vrai Google Chrome =====
+// ===== Identité navigateur des panneaux IA (connexion Google) =====
 // Sans ça, Google refuse la connexion (« Ce navigateur ou cette application ne
-// sont peut-être pas sécurisés »). Le module aligne UA, en-têtes Sec-CH-UA et
-// navigator.userAgentData sur ceux d'un Chrome de bureau, pour chaque <webview>
+// sont peut-être pas sécurisés »). Le module donne une identité cohérente :
+// Firefox sur les pages Google, Chrome partout ailleurs, pour chaque <webview>
 // et chaque popup OAuth. À installer avant la création de la moindre fenêtre.
-require('./chrome-identity').install(app);
+require('./browser-identity').install(app);
 
 // ===== Durcissement navigation / popups (chantier B) =====
 // Origines de confiance autorisées à ouvrir une popup depuis une <webview>.

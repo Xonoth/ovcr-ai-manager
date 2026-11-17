@@ -30,7 +30,8 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 ai-manager/
 ├── index.html          # TOUTE l'app : HTML + CSS (<style>) + JS (<script>). ~1285 lignes.
 ├── main.js             # Process principal Electron (~155 lignes). Fenêtre + IPC fichiers + durcissement navigation/popups.
-├── chrome-identity.js  # Identité « Google Chrome » cohérente (UA, Sec-CH-UA, userAgentData) pour webviews/popups — connexion Google.
+├── browser-identity.js # Identité navigateur des webviews/popups : Firefox sur Google, Chrome ailleurs ; FedCM désactivé — connexion Google.
+├── browser-identity-preload.js # Preload de session : aligne navigator sur Firefox sur les pages Google.
 ├── scripts/
 │   └── prune-locales.js # Post-build : supprime les locales Chromium inutiles (garde fr/en-US/en-GB), lancé par `npm run dist`
 ├── assets/
@@ -57,7 +58,7 @@ ai-manager/
 - **Lancer en dev** : `npm start` (= `electron .`)
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.2.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.3.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -65,7 +66,7 @@ ai-manager/
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.2.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.3.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -245,7 +246,7 @@ application ne sont peut-être pas sécurisés »**.
   v110. S'applique à l'hôte, à toutes les `<webview>` et aux popups OAuth.
 - **Vérifié** : flux réel Claude → « Continuer avec Google » dans une `<webview>`
   avec popup ; la page d'identification Google s'affiche normalement.
-- **Récidive (novembre 2026) → correctif complet** (`chrome-identity.js`,
+- **Récidive (novembre 2026) → identité Chrome complète, 1.0.2** (`chrome-identity.js`,
   installé en tête de `main.js`) : l’UA seul ne suffisait plus. Diagnostic sur
   Electron 43.7.1 : `navigator.userAgentData.brands` = `["Not;A=Brand",
   "Chromium"]` (pas de « Google Chrome ») et **aucun en-tête `Sec-CH-UA`**
@@ -266,6 +267,38 @@ application ne sont peut-être pas sécurisés »**.
   Livré en **version 1.0.2** (`package.json` + `--app-version`), zip
   `dist/OVCR-AI-Manager-1.0.2.zip` (135,7 Mo) ; `.exe` packagé vérifié
   (FileVersion 1.0.2, `chrome-identity.js` présent dans `app.asar`, démarrage OK).
+- **1.0.2 insuffisante → identité Firefox sur Google, 1.0.3** (`browser-identity.js`
+  + `browser-identity-preload.js`, ex-`chrome-identity.js`). Reproduit avec
+  une adresse fictive (redirection `/v3/signin/rejected`) : l’identité Chrome,
+  même complète, était rejetée à chaque essai ; Google vérifie en JS des
+  détails propres au vrai Chrome (`window.chrome`, etc.) qu’Electron n’a pas.
+  Une identité **Firefox** passe (Firefox = autre moteur, Google n’y attend
+  aucun de ces détails). Le module :
+  1. choisit l’identité par page principale : **Firefox sur `google.com` et
+     sous-domaines**, **Chrome partout ailleurs** (Cloudflare de Claude/ChatGPT
+     repérerait un Chromium qui se dit Firefox) ; bascule sur
+     `did-start-navigation`/`did-redirect-navigation` via
+     `Emulation.setUserAgentOverride` ;
+  2. côté réseau (`webRequest`) : requêtes vers une page Google -> UA Firefox
+     et **aucun** `Sec-CH-UA` ; ailleurs -> UA Chrome + client hints ;
+  3. preload enregistré **sur la session** (`ses.registerPreloadScript`, pas
+     `will-attach-webview` : les popups OAuth n’héritent pas du preload de la
+     webview) : sur les pages Google, supprime `navigator.userAgentData` et
+     `window.chrome`, et aligne `vendor`/`productSub`/`appVersion`/`oscpu`/
+     `buildID` sur Firefox, via `contextBridge.executeInMainWorld` (le
+     preload tourne dans un monde isolé) ;
+  4. **FedCM désactivé** (`--disable-features=FedCm`) : le bouton « Continuer
+     avec Google » des sites tiers (Google Identity Services, ex. Perplexity)
+     passait par FedCM, qu’Electron expose sans en avoir l’interface ni les
+     comptes -> échec silencieux (`[GSI_LOGGER]: FedCM get() rejects…`), clic
+     sans effet. Sans FedCM, GIS retombe sur la redirection OAuth classique.
+  Version de Firefox annoncée calculée d’après la date (une version / 4
+  semaines depuis Firefox 134 le 07/01/2025) pour ne pas vieillir.
+  **Attention aux tests** : des essais répétés avec des adresses fictives font
+  signaler l’IP par Google (CAPTCHA, rejets même pour un vrai navigateur) —
+  tester avec parcimonie, idéalement avec un vrai compte. Validé par
+  l’utilisateur (connexion Google + Perplexity OK). Livré en **version 1.0.3**,
+  zip `dist/OVCR-AI-Manager-1.0.3.zip`.
 - **Limite** : le blocage de Google est **basé sur le risque**, pas seulement sur
   l'UA (IP, nombre de comptes enchaînés sur la même machine, protection avancée
   du compte…). Si le message revient malgré tout sur un compte donné, le
