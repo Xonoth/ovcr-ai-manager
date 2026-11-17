@@ -63,6 +63,7 @@ ai-manager/
 ├── main.js                 # Process principal Electron : fenêtre, IPC fichiers, durcissement navigation/popups
 ├── browser-identity.js     # Identité navigateur (Firefox sur Google, Chrome ailleurs) pour la connexion Google
 ├── browser-identity-preload.js # Preload : aligne ce que voient les pages Google
+├── site-permissions.js     # Autorisations des sites : question à l'utilisateur au lieu d'un accord d'office
 ├── assets/
 │   ├── icons.js            # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
 │   └── fonts/              # Polices WOFF2 locales (Space Grotesk, Inter, JetBrains Mono)
@@ -86,6 +87,7 @@ Transparence complète — ce qui est fait, et ce qui ne l'est pas :
 **Mesures en place :**
 - Échappement HTML systématique de toute donnée utilisateur injectée dans le DOM ; aucun `onclick` généré dynamiquement (délégation d'événements par `data-*`).
 - La fenêtre hôte ne peut pas naviguer vers une URL distante ni ouvrir de fenêtre ; les popups des webviews sont filtrées par **liste blanche d'origines** (les 9 services + fournisseurs OAuth courants), tout le reste part dans le navigateur système.
+- **Autorisations des sites demandées, plus accordées d'office** : position, micro, caméra, notifications, lecture du presse-papiers, capture d'écran et ouverture d'applications externes déclenchent une question (« Autoriser / Refuser », mémorisable par site). Le reste (USB, MIDI, série…) est refusé. Bouton « Réinitialiser les autorisations des sites » dans la page d'aide (`?`).
 - Garde-fous divers : unicité des profils (pas de partage de session accidentel), limite de taille des fichiers ouverts dans l'éditeur, stockage tolérant à la corruption avec backup.
 
 Les issues de sécurité sont bienvenues — merci de les signaler de façon responsable.

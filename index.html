@@ -423,6 +423,7 @@
     <div style="color:var(--fg-muted); font-size:13px; margin-top:4px;">À quoi sert chaque service, et quand l'utiliser.</div>
     <div class="help-list" id="helpList"></div>
     <div class="modal__actions">
+      <button class="btn" onclick="resetSitePermissions()" title="Les sites redemanderont la position, le micro, la caméra, les notifications…">Réinitialiser les autorisations des sites</button>
       <button class="btn" onclick="closeHelpModal()">Fermer</button>
     </div>
   </div>
@@ -1122,6 +1123,12 @@
         `;
       }).join('');
       document.getElementById('helpModal').classList.add('open');
+    }
+    // Oublie les autorisations mémorisées (position, micro, caméra,
+    // notifications…) : chaque site redemandera à sa prochaine demande.
+    window.resetSitePermissions = async function() {
+      const ok = await ipcRenderer.invoke('reset-site-permissions');
+      showToast(ok ? 'Autorisations des sites réinitialisées' : 'Réinitialisation impossible', ok ? 'success' : 'error');
     }
     window.closeHelpModal = function() { document.getElementById('helpModal').classList.remove('open'); }
     // Fermeture par clic en dehors de la boîte (sur le fond assombri).

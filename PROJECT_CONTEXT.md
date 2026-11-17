@@ -32,6 +32,7 @@ ai-manager/
 ├── main.js             # Process principal Electron (~155 lignes). Fenêtre + IPC fichiers + durcissement navigation/popups.
 ├── browser-identity.js # Identité navigateur des webviews/popups : Firefox sur Google, Chrome ailleurs ; FedCM désactivé — connexion Google.
 ├── browser-identity-preload.js # Preload de session : aligne navigator sur Firefox sur les pages Google.
+├── site-permissions.js # Autorisations des sites (position, micro, caméra, notifs…) : question + mémorisation par site.
 ├── scripts/
 │   └── prune-locales.js # Post-build : supprime les locales Chromium inutiles (garde fr/en-US/en-GB), lancé par `npm run dist`
 ├── assets/
@@ -58,7 +59,7 @@ ai-manager/
 - **Lancer en dev** : `npm start` (= `electron .`)
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.3.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.4.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -66,7 +67,7 @@ ai-manager/
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.3.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.4.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -332,6 +333,40 @@ Dans la foulée (même lot, sans rapport avec le bug) :
   un membre ouvre les propriétés du `.exe` et sait tout de suite ce qu'il a.
   Publié en **release GitHub `v1.0.1`** avec le zip en pièce jointe — c'est
   désormais le canal de téléchargement de référence.
+
+### Autorisations des sites (novembre 2026)
+
+Constat : Electron **accorde d'office** toute autorisation demandée par une page.
+Perplexity recevait ainsi la position de l'utilisateur sans question
+(`locationMetadata.permissionState: "granted"` dans son `localStorage`).
+
+- **`site-permissions.js`** (installé dans `main.js` juste après
+  `browser-identity`) pose, pour chaque session (`session-created`), un
+  `setPermissionRequestHandler` et un `setPermissionCheckHandler` :
+  - **question** (`dialog.showMessageBox` sur la fenêtre hôte, « Autoriser /
+    Refuser » + case « Se souvenir de ce choix pour ce site » cochée par défaut) :
+    `geolocation`, `notifications`, `clipboard-read`, `display-capture`,
+    `media` (micro et caméra décidés séparément), `openExternal` (par protocole) ;
+  - **accordé sans question** : `clipboard-sanitized-write`, `fullscreen`,
+    `mediaKeySystem`, `speaker-selection`, `storage-access`,
+    `top-level-storage-access` (iframes de connexion) ;
+  - **refusé** : tout le reste (USB, HID, série, MIDI, idle-detection,
+    window-management, verrouillages clavier/souris, fileSystem…) ;
+  - l'interface locale (`file://`) a tout.
+- Choix mémorisés **par origine, tous comptes confondus**, dans
+  `%APPDATA%\ai-manager\site-permissions.json`. Bouton « Réinitialiser les
+  autorisations des sites » dans la page d'aide → IPC `reset-site-permissions`.
+- **Subtilité du check handler** (synchrone, oui/non seulement, pas de
+  « à demander ») : sans choix mémorisé, il répond **oui** pour position, micro,
+  caméra, presse-papiers et écran — le site tente alors l'accès, ce qui passe par
+  la question ; répondre non ferait renoncer le site sans jamais demander. Pour
+  les **notifications**, il répond **non** tant qu'elles ne sont pas autorisées :
+  un site qui lit `Notification.permission === "granted"` les affiche sans rien
+  demander. `Notification.requestPermission()` passe quand même par la question.
+- Vérifié par un harnais (boîte de dialogue simulée) : question au premier accès,
+  refus mémorisé sans redemande, « autoriser une fois » non mémorisé, USB refusé
+  sans question, réinitialisation. Validé à la main par l’utilisateur ; livré en
+  **version 1.0.4** (zip `dist/OVCR-AI-Manager-1.0.4.zip`).
 
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (quasiment toujours `index.html`, parfois `main.js`), rappelle que c'est du **JS vanilla dans un `<script>`** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).

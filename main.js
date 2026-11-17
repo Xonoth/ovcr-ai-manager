@@ -14,6 +14,13 @@ app.setPath('userData', path.join(app.getPath('appData'), 'ai-manager'));
 // et chaque popup OAuth. À installer avant la création de la moindre fenêtre.
 require('./browser-identity').install(app);
 
+// ===== Autorisations des sites =====
+// Electron accorde par défaut TOUT ce que demande une page (position, micro,
+// caméra, notifications…) sans rien demander. On demande à l'utilisateur à la
+// place, avec mémorisation par site (voir site-permissions.js).
+const sitePermissions = require('./site-permissions');
+sitePermissions.install(app);
+
 // ===== Durcissement navigation / popups (chantier B) =====
 // Origines de confiance autorisées à ouvrir une popup depuis une <webview>.
 // On y met les 9 services + les fournisseurs d'identité courants pour que les
@@ -110,6 +117,12 @@ function createWindow() {
 }
 
 // --- IPC pour la gestion des fichiers locaux ---
+
+// Oublie les autorisations mémorisées (bouton de la page d'aide).
+ipcMain.handle('reset-site-permissions', () => {
+  sitePermissions.reset();
+  return true;
+});
 
 ipcMain.handle('select-folder', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
