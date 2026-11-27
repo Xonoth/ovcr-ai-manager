@@ -80,7 +80,7 @@ ai-manager/
   - Les **tests manuels** (vrais services IA, OAuth, vraie coupure réseau…) sont listés dans `TESTS-MANUELS.md`.
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.1.0.zip` (~136 Mo, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.2.0.zip` (~136 Mo, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -88,7 +88,7 @@ ai-manager/
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.0.4.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.2.0.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -436,7 +436,7 @@ Perplexity recevait ainsi la position de l'utilisateur sans question
 
 ### Phase 2 — Fiabilité et robustesse (novembre 2026)
 
-Audit puis 8 lots, chacun testé avant le suivant. Version **1.2.0**, avec **Electron 43.7.1 → 43.8.10** (corrige les alertes de sécurité d'Electron, dont une « high » ; même Chromium 150.0.7871.250, donc identité Google inchangée). Build de test `dist/[OVCR] AI Manager-win32-x64` produit pour la validation manuelle (`TESTS-MANUELS.md`) ; **pas de zip ni de release** tant qu'elle n'est pas faite.
+Audit puis 8 lots, chacun testé avant le suivant. Version **1.2.0**, avec **Electron 43.7.1 → 43.8.10** (corrige les alertes de sécurité d'Electron, dont une « high » ; même Chromium 150.0.7871.250, donc identité Google inchangée). **Validé à la main par l'utilisateur** avec le `.exe` 1.2.0 (`TESTS-MANUELS.md`), puis livré : zip `dist/OVCR-AI-Manager-1.2.0.zip`.
 
 - **Lot 0 — banc de tests** : `security-policy.js` (règles pures extraites de `main.js`, logique inchangée), `test/` (unitaires `node:test` + intégration Electron), scripts `npm test` / `npm run test:electron`.
 - **Lot 1 — stockage** : `atomic-file.js` (rotation `.bak` atomique, nouvelles tentatives EPERM/EBUSY/EACCES, pas de `.tmp` orphelin) ; sauvegarde mise à l'abri avant rotation quand le principal est illisible/absent (**C1**, bug réel reproduit : 2 enregistrements après « Ignorer » détruisaient la seule sauvegarde) ; mode protégé du renderer si la lecture échoue (**C2**) ; principal absent + `.bak` valide → restauration proposée (**E1**) ; restauration sans instant sans fichier ; **instance unique** (**E2**) ; charge utile non tableau = corrompue (**M1**) ; `site-permissions.json` atomique, illisible mis de côté (**M4**) ; bandeau persistant d'échec d'enregistrement (**M5**) ; fermeture attendue 5 s max (**M7**).
