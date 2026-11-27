@@ -59,8 +59,12 @@ Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet �
 
 ```
 ai-manager/
-├── index.html              # Toute l'app : HTML + CSS + JS vanilla (~1300 lignes)
-├── main.js                 # Process principal Electron : fenêtre, IPC fichiers, durcissement navigation/popups
+├── index.html              # Interface : HTML + CSS + CSP
+├── renderer/app.js         # Logique de l'interface (JS vanilla, sans accès Node)
+├── app-preload.js          # Pont minimal interface -> processus principal (window.ovcr)
+├── main.js                 # Process principal Electron : fenêtre, IPC validés, durcissement navigation/popups/webviews
+├── file-access.js          # Accès aux fichiers de l'explorateur/éditeur (validation des chemins)
+├── accounts-store.js       # Stockage chiffré des comptes (safeStorage) + migration/retour arrière
 ├── browser-identity.js     # Identité navigateur (Firefox sur Google, Chrome ailleurs) pour la connexion Google
 ├── browser-identity-preload.js # Preload : aligne ce que voient les pages Google
 ├── site-permissions.js     # Autorisations des sites : question à l'utilisateur au lieu d'un accord d'office
@@ -69,22 +73,27 @@ ai-manager/
 │   └── fonts/              # Polices WOFF2 locales (Space Grotesk, Inter, JetBrains Mono)
 ├── scripts/prune-locales.js # Post-build : purge des locales Chromium inutilisées
 ├── PROJECT_CONTEXT.md      # Documentation interne détaillée (architecture, historique des chantiers)
+├── SECURITY.md             # Modèle de sécurité, stockage, limites restantes
 └── DISTRIBUTION-LISEZ-MOI.txt # Notice utilisateur jointe au zip distribué
 ```
 
-Pas de framework, pas de bundler, pas de TypeScript : JS vanilla dans un seul `index.html`, volontairement. `PROJECT_CONTEXT.md` contient la documentation d'architecture complète pour qui veut contribuer.
+Pas de framework, pas de bundler, pas de TypeScript : JS vanilla en scripts classiques (`index.html` + `renderer/app.js`), volontairement. `PROJECT_CONTEXT.md` contient la documentation d'architecture complète pour qui veut contribuer.
 
 ## Sécurité et limites connues
 
 Transparence complète — ce qui est fait, et ce qui ne l'est pas :
 
+Le détail complet (modèle, migration, retour arrière, limites) est dans [SECURITY.md](SECURITY.md).
+
 **Limites assumées (à connaître avant d'utiliser) :**
-- Le renderer tourne avec **`nodeIntegration: true` et `contextIsolation: false`** : la page hôte a un accès complet à Node/OS. C'est la principale dette de sécurité du projet ; la migration vers `contextIsolation` + preload est un chantier identifié mais non réalisé. Les webviews des services, elles, tournent sans privilèges Node.
-- **Les sessions IA (cookies) et les métadonnées de comptes sont stockées en clair** dans `%APPDATA%\ai-manager` et le `localStorage`. Aucun chiffrement au repos. Règle simple : **une session Windows = une personne** — n'utilisez pas l'app dans un compte Windows partagé.
+- **Les sessions IA (cookies) sont stockées en clair** dans `%APPDATA%\ai-manager\Partitions` (gérées par Chromium). Les métadonnées de comptes, elles, sont désormais chiffrées (`safeStorage`/DPAPI), ce qui protège des autres comptes Windows mais pas d'un programme malveillant lancé sous le vôtre. Règle simple : **une session Windows = une personne** — n'utilisez pas l'app dans un compte Windows partagé.
 - L'exécutable distribué n'est **pas signé** (avertissement SmartScreen normal).
-- Pas de CSP sur `index.html` (prérequis faits — zéro ressource distante — mais l'en-tête n'est pas encore posé).
 
 **Mesures en place :**
+- **Interface sans accès à Node.js** : `nodeIntegration: false`, `contextIsolation: true`, sandbox Chromium pour tous les processus. L'interface ne parle au processus principal que par une API minimale (`window.ovcr`, une méthode par opération) ; chaque appel est validé côté processus principal et refusé s'il ne vient pas de la page locale de l'app.
+- **Content Security Policy** stricte sur l'interface : aucun script inline, aucun `eval`, aucune connexion réseau.
+- **Fichiers** : seul le dossier choisi par l'utilisateur est accessible (chemins normalisés et résolus, traversée `..\` et liens sortants refusés) ; on ne peut réenregistrer qu'un fichier ouvert dans l'éditeur ; binaires refusés, fichiers non UTF-8 en lecture seule, 20 Mo max.
+- **Webviews** : préférences de sécurité imposées à la création, destination `https://` vers un service connu et partition de profil obligatoires.
 - Échappement HTML systématique de toute donnée utilisateur injectée dans le DOM ; aucun `onclick` généré dynamiquement (délégation d'événements par `data-*`).
 - La fenêtre hôte ne peut pas naviguer vers une URL distante ni ouvrir de fenêtre ; les popups des webviews sont filtrées par **liste blanche d'origines** (les 9 services + fournisseurs OAuth courants), tout le reste part dans le navigateur système.
 - **Autorisations des sites demandées, plus accordées d'office** : position, micro, caméra, notifications, lecture du presse-papiers, capture d'écran et ouverture d'applications externes déclenchent une question (« Autoriser / Refuser », mémorisable par site). Le reste (USB, MIDI, série…) est refusé. Bouton « Réinitialiser les autorisations des sites » dans la page d'aide (`?`).
@@ -97,9 +106,9 @@ Les issues de sécurité sont bienvenues — merci de les signaler de façon res
 Projet maintenu en solo, contributions bienvenues — en particulier :
 
 - **Ajouter un service IA** (le pattern est entièrement data-driven) : une entrée dans `SERVICES`, des variables de couleur `--<id>`/`--<id>-dim` + une classe `.svc-<id>`, une fiche `SERVICE_INFO` pour la page d'aide, et si besoin le domaine d'auth dans `ALLOWED_POPUP_HOSTS` (`main.js`). La migration attache automatiquement le nouveau service aux comptes existants.
-- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (la migration `contextIsolation` est le gros morceau ouvert).
+- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : fuses Electron, signature).
 
-Règles du projet : JS vanilla sans dépendance nouvelle, toute donnée utilisateur passe par `escapeHtml()`, les écritures de comptes passent par `saveAccounts()`, les listes cliquables utilisent la délégation d'événements. Lisez `PROJECT_CONTEXT.md` avant une contribution non triviale. Fork → branche → pull request.
+Règles du projet : JS vanilla sans dépendance nouvelle, toute donnée utilisateur passe par `escapeHtml()`, aucun script ni `onclick` inline (CSP), tout accès disque passe par une méthode dédiée de `window.ovcr` validée dans le processus principal, les écritures de comptes passent par `saveAccounts()`, les listes cliquables utilisent la délégation d'événements. Lisez `PROJECT_CONTEXT.md` avant une contribution non triviale. Fork → branche → pull request.
 
 ## Licence
 

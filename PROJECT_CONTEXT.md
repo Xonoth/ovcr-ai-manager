@@ -18,7 +18,7 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 ## 2. Stack technique
 
 - **Electron** `^43.7.1` (app desktop, un process principal + un renderer).
-- **HTML/CSS/JS vanilla** — pas de framework (pas de React/Vue). Tout le front est dans un seul fichier `index.html` (+ un petit `assets/icons.js` pour les icônes).
+- **HTML/CSS/JS vanilla** — pas de framework (pas de React/Vue). Le front = `index.html` (HTML + CSS + CSP) + `renderer/app.js` (toute la logique, script classique) + `assets/icons.js` (icônes). Le JS a été sorti d'`index.html` en phase 1 sécurité pour que la CSP interdise les scripts inline.
 - **Monaco Editor** `^0.45.0` (l'éditeur de VS Code), chargé en local depuis `node_modules`.
 - **Polices & icônes 100% LOCALES** (plus aucun CDN externe) : polices Google Fonts en `.woff2` sous `assets/fonts/`, icônes ex-Font Awesome converties en **SVG inline** dans `assets/icons.js`. L'app s'affiche donc identiquement hors-ligne.
 - **Packaging** : `@electron/packager` (génère un dossier + `.exe`). `electron-builder` a été **retiré des devDependencies** (septembre 2026) : il **ne fonctionne pas sur cette machine** (il exige des droits admin/Mode développeur pour créer des liens symboliques) et traînait 11 alertes `npm audit` dont une critique. Le bloc `build` de `package.json` (config electron-builder) est **conservé** : il ne coûte rien et servira tel quel si on réinstalle l'outil un jour.
@@ -28,8 +28,14 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 
 ```
 ai-manager/
-├── index.html          # TOUTE l'app : HTML + CSS (<style>) + JS (<script>). ~1285 lignes.
-├── main.js             # Process principal Electron (~155 lignes). Fenêtre + IPC fichiers + durcissement navigation/popups.
+├── index.html          # Interface : HTML + CSS (<style>) + CSP (<meta>). Plus aucun script inline ni onclick.
+├── renderer/
+│   └── app.js          # Toute la logique de l'interface (ex-<script> d'index.html), SANS accès Node : passe par window.ovcr.
+├── app-preload.js      # Preload de la fenêtre hôte : expose window.ovcr (liste fermée de méthodes, contextBridge).
+├── main.js             # Process principal Electron. Fenêtre sécurisée + IPC validés (expéditeur vérifié) + durcissement navigation/popups/webviews.
+├── file-access.js      # Fichiers de l'explorateur/éditeur : racines autorisées, chemins résolus, limites (voir SECURITY.md §4).
+├── accounts-store.js   # Comptes : stockage chiffré safeStorage dans userData, sauvegarde, migration depuis localStorage, retour arrière.
+├── SECURITY.md         # Modèle de sécurité, CSP, stockage, limites restantes, pistes.
 ├── browser-identity.js # Identité navigateur des webviews/popups : Firefox sur Google, Chrome ailleurs ; FedCM désactivé — connexion Google.
 ├── browser-identity-preload.js # Preload de session : aligne navigator sur Firefox sur les pages Google.
 ├── site-permissions.js # Autorisations des sites (position, micro, caméra, notifs…) : question + mémorisation par site.
@@ -50,16 +56,16 @@ ai-manager/
 └── dist/               # sorties de build (généré par `npm run dist`) + OVCR-AI-Manager-<version>.zip (à distribuer) — NON versionné
 ```
 
-- **Tout le code applicatif (UI, logique comptes, éditeur, redimensionnement) est dans `index.html`**, dans une grande fonction `initApp()`.
+- **Tout le code applicatif de l'interface (UI, logique comptes, éditeur, redimensionnement) est dans `renderer/app.js`**, dans une grande fonction `async initApp()` (asynchrone : les comptes sont chargés depuis le processus principal).
 - `assets/icons.js` est chargé avant l'app (`<script src>` dans le `<head>`) et expose `window.OVCR_ICONS` + `window.hydrateIcons(root)`.
-- `main.js` : crée la fenêtre, fixe le dossier de données, **durcit la navigation/les popups** (voir §10), et expose 4 handlers IPC fichiers (`select-folder`, `read-directory`, `read-file`, `save-file`).
+- `main.js` : crée la fenêtre, fixe le dossier de données, **durcit la navigation/les popups/les webviews** (voir §10), et enregistre les canaux IPC (`files:*`, `accounts:*`, `storage:*`, `site-permissions:reset`), tous protégés par `isTrustedSender`.
 
 ## 4. Comment lancer / construire
 
 - **Lancer en dev** : `npm start` (= `electron .`)
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.0.4.zip` (**135,7 Mo** depuis Electron 43.7.1, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.1.0.zip` (~136 Mo, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -74,18 +80,22 @@ ai-manager/
 
 Deux endroits distincts, à ne pas confondre :
 
-1. **Métadonnées des comptes** → `localStorage` du renderer.
-   - Clé `ai_accounts` : tableau JSON de comptes.
-   - Clé `ai_accounts_backup` : **copie de sauvegarde** (1 seule génération) écrite automatiquement avant chaque écrasement de `ai_accounts` — sert à la récupération si `ai_accounts` est corrompu (voir §7, chantier C).
+1. **Métadonnées des comptes** → tenues par le **processus principal** (`accounts-store.js`), depuis la phase 1 sécurité.
+   - `%APPDATA%\ai-manager\accounts.json` : tableau JSON de comptes, dans une enveloppe `{format:"ovcr-accounts", version:1, encryption:"safeStorage"|"none", payload}` ; charge utile **chiffrée `safeStorage`** (DPAPI). `"none"` seulement si le chiffrement est indisponible (rechiffré au lancement suivant).
+   - `accounts.json.bak` : **génération précédente** (copiée avant chaque écrasement si elle est valide) — remplace `ai_accounts_backup`.
+   - `backups/pre-migration-<date>.json` : sauvegarde chiffrée de l'état `localStorage` d'origine, faite avant la migration.
+   - Fichier illisible → jamais supprimé : renommé `accounts.unreadable-<date>.json`.
+   - Le renderer n'écrit jamais ces fichiers : `saveAccounts()` envoie un instantané par `window.ovcr.accounts.save()`, le main **valide** (types, tailles, couleur `#hex`, profil non vide sans caractère de contrôle) puis écrit de façon **atomique** (fichier temporaire + `fsync` + renommage), une écriture à la fois, et retarde la fermeture de l'app tant qu'une écriture est en cours.
+   - **Migration automatique** au 1er lancement : les anciennes clés `localStorage` `ai_accounts` / `ai_accounts_backup` sont reprises telles quelles, vérifiées, puis effacées. **Retour arrière** : lancer avec `--revert-storage-migration` (voir SECURITY.md §5).
+   - **Chargement résilient** inchangé côté utilisateur : donnée corrompue ou indéchiffrable → modale proposant la sauvegarde (`api.accounts.restoreBackup()`).
+2. **Préférences d'affichage** → `localStorage` du renderer (non sensibles, en clair) :
    - Clés `ide_w`, `explorer_w` : largeurs mémorisées des colonnes.
    - Clé `collapsed_accounts` : tableau JSON des ids de comptes dont la carte est **repliée** (vue compacte). Lecture/écriture défensives (`try/catch`), purgée des ids de comptes supprimés à chaque écriture (`saveCollapsed()`).
-   - **Stocké EN CLAIR** (pas de chiffrement — un mot de passe maître avait été prototypé puis retiré à la demande de l'utilisateur).
-   - **Chargement résilient** : le `JSON.parse` de `ai_accounts` est protégé (`readJSON`). Une donnée corrompue ne plante plus l'app ; une modale propose de restaurer `ai_accounts_backup`. Les écritures de **`ai_accounts`** passent toutes par `saveAccounts()`. (`ide_w`/`explorer_w` restent des chaînes lues/écrites en direct — lectures et écritures désormais enveloppées d'un `try/catch`.)
 
-2. **Sessions de connexion IA (cookies/tokens)** → dossier de données Electron.
+3. **Sessions de connexion IA (cookies/tokens)** → dossier de données Electron.
    - Chemin : `%APPDATA%\ai-manager\Partitions\profil_X\` (un dossier par profil).
    - **Fixé en dur** dans `main.js` via `app.setPath('userData', ...'ai-manager')` pour que la version packagée réutilise le même profil quel que soit le nom du produit.
-   - ⚠️ Les cookies y sont **stockés en clair** (vérifié : Electron ne les chiffre pas ici). Aucune protection au repos n'est implémentée (l'utilisateur a écarté BitLocker/VeraCrypt pour le moment).
+   - ⚠️ Les cookies y sont **stockés en clair** (fuse Electron `EnableCookieEncryption` désactivé par défaut). Non modifié en phase 1 : l'activer est **irréversible** (voir SECURITY.md §6-7) — décision utilisateur en attente. L'app ne lit ni n'exporte jamais ces cookies.
 
 ### Schéma d'un compte (`ai_accounts`)
 ```json
@@ -134,14 +144,14 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 - `setLayout(mode)` — vue 1 ou 2 panneaux ; gère la poignée de redimensionnement entre panneaux IA. Repasser en vue simple **ne détruit pas** la webview du panneau 2 (session conservée, mais RAM occupée ~100-250 Mo).
 - **Bouton « Fermer le panneau 2 »** (`#btnClosePane2`, icône `times-circle` dans la barre du workspace) : visible **uniquement** quand une webview vit dans le panneau 2 (y compris cachée en vue simple — géré par `updateClosePane2Btn()`, appelée par `openService`/`closePane2`). `closePane2()` détruit la webview (`innerHTML` → le process invité Chromium est tué, RAM libérée), restaure le placeholder « Panneau 2 vide » et masque le bouton. En vue scindée, `openService` **cible en priorité un panneau vide** (le panneau 2 fraîchement fermé est re-rempli au prochain service, sans écraser le panneau 1) ; l'alternance habituelle reprend quand les deux panneaux sont occupés.
 - `toggleDashboard()` / `toggleExplorer()` / `toggleIdePanel()` — replier/déplier les panneaux.
-- **Éditeur** : Monaco est chargé **PARESSEUSEMENT** (audit perf) : `ensureMonacoLoaded()` n'appelle `loadMonaco()` qu'à la **première ouverture du panneau éditeur** (`toggleIdePanel`), plus au démarrage — un placeholder « Chargement de l'éditeur… » s'affiche ~0,3-0,7 s. Économie au démarrage : ~4 Mo de JS non parsés, ~12 Mo de heap. `loadMonaco()` garde le chemin ABSOLU calculé depuis l'emplacement d'`index.html` (crucial pour le .exe packagé). Si Monaco échoue, `__initFallbackEditor()` crée un éditeur de secours (`<textarea>`) fonctionnel avec Ctrl+S. Accès unifié via `getEditorValue()` / `setEditorContent()`.
+- **Éditeur** : Monaco est chargé **PARESSEUSEMENT** (audit perf) : `ensureMonacoLoaded()` n'appelle `loadMonaco()` qu'à la **première ouverture du panneau éditeur** (`toggleIdePanel`), plus au démarrage — un placeholder « Chargement de l'éditeur… » s'affiche ~0,3-0,7 s. Économie au démarrage : ~4 Mo de JS non parsés, ~12 Mo de heap. `loadMonaco()` injecte le loader AMD et calcule une URL ABSOLUE depuis l'emplacement d'`index.html` (crucial pour le .exe packagé). Si Monaco échoue, `__initFallbackEditor()` crée un éditeur de secours (`<textarea>`) fonctionnel avec Ctrl+S. Accès unifié via `getEditorValue()` / `setEditorContent(content, lang, readOnly)`. Les refus du main (fichier hors dossier, binaire, trop gros…) s'affichent en toast via `FILE_ERRORS` ; un fichier non UTF-8 s'ouvre en lecture seule (`currentFileReadOnly`).
 - **Redimensionnement** : `setupResizers()` + `makeResizer()` — colonnes ajustables à la souris (éditeur, explorateur, entre panneaux IA), via `flex-basis` (pas `width`) pour contourner un piège de flexbox avec Monaco ; largeurs mémorisées dans `localStorage`.
 - **Palette** : `Ctrl+K` ouvre une recherche rapide de compte/IA (`filterPalette()`).
 - **Page d'aide « Comprendre les IA disponibles »** : bouton `?` (icône `circle-question`) dans la barre du workspace (toujours visible, même sidebar repliée) → `openHelpModal()` remplit `#helpList` depuis `SERVICES` + **`SERVICE_INFO`** (objet statique indexé par id : `{ what, when }` — descriptions grand public, aucune requête réseau) et ouvre la modale `#helpModal` (réutilise `.modal-overlay`/`.modal` + variante `.modal--help` : hauteur bornée à la fenêtre, seule la liste scrolle). Fermeture : bouton, Échap (handler global existant), clic sur le fond. Un service sans fiche `SERVICE_INFO` affiche « Description à venir ». Lecture seule : ne touche ni comptes, ni cooldowns.
 - **Sécurité / robustesse (lot de durcissement A/B/C/D)** :
-  - `escapeHtml(str)` — échappe `& < > " '`. À utiliser **partout** où une donnée utilisateur (nom/email/profil de compte, nom de fichier) est injectée en `innerHTML`. Critique car le renderer tourne en `nodeIntegration:true`.
+  - `escapeHtml(str)` — échappe `& < > " '`. À utiliser **partout** où une donnée utilisateur (nom/email/profil de compte, nom de fichier) est injectée en `innerHTML`. (Le renderer n'a plus Node et la CSP bloque les scripts inline, mais on garde les deux barrières.)
   - **Délégation d'événements** : un seul listener `click` par conteneur stable (`#accountsList`, `#paletteResults`, `#fileList`) lit `data-action`/`data-acc`/`data-svc`/`data-path`. Plus aucune donnée n'est injectée dans un attribut `onclick` généré. (Les `onclick` **statiques** codés en dur, sans donnée utilisateur, sont conservés.)
-  - `readJSON(key)` / `saveAccounts(list)` / `exportAccountsJSON()` / `importAccountsJSON(text)` / `showRecoveryUI()` — stockage résilient + fondation d'un futur export/import JSON. `saveAccounts` ne recopie l'ancienne valeur dans le backup que si elle est un JSON **valide** (ne détruit jamais un bon backup).
+  - `saveAccounts(list)` / `exportAccountsJSON()` / `importAccountsJSON(text)` / `showRecoveryUI()` — stockage résilient (désormais côté main, voir §5) + fondation d'un futur export/import JSON. Le main ne recopie l'ancienne génération dans `accounts.json.bak` que si elle est **valide** (ne détruit jamais un bon backup).
 - **Icônes** : `hydrateIcons(root)` (dans `assets/icons.js`) remplace chaque `<span class="ic" data-icon="NOM">` par son SVG. Appelé au démarrage (HTML statique) et après chaque `innerHTML` dynamique. Ajouter une icône = ajouter une entrée `{vb, p}` dans `window.OVCR_ICONS` (viewBox + path).
 
 ## 8. UI / Thème (communauté OverCreep, violet / rose)
@@ -161,14 +171,21 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 
 ## 10. Architecture Electron & points de sécurité (état actuel)
 
-- `main.js` crée la `BrowserWindow` avec **`nodeIntegration: true`** et **`contextIsolation: false`** + `webviewTag: true`. Reste **la principale faiblesse de fond** : la page privilégiée a un accès complet à Node/OS. Non corrigé (migration `contextIsolation` = chantier séparé, volontairement hors périmètre du lot A/B/C/D).
-- **Durcissement DÉJÀ EN PLACE (lot B)** dans `main.js` :
-  - `will-navigate` sur la fenêtre hôte → bloque toute navigation qui n'est pas vers le `index.html` local (l'hôte privilégié ne part jamais sur une URL distante).
-  - `setWindowOpenHandler` sur l'hôte → refuse toute nouvelle fenêtre.
-  - `did-attach-webview` → filtre les popups des `<webview>` via une **liste blanche d'origines** (`ALLOWED_POPUP_HOSTS` : les 9 services + fournisseurs d'auth OAuth type Google/Microsoft/Apple/GitHub/Discord). Popup whitelistée → autorisée (sans privilège Node) ; lien web hors-liste → ouvert dans le **navigateur système** (`shell.openExternal`) ; schéma non-web → refusé. `allowpopups` reste sur les webviews (nécessaire aux flux OAuth), mais désormais filtré.
-- **Échappement HTML DÉJÀ EN PLACE (lot A)** : un nom de compte contenant du HTML/JS n'est plus exécutable (voir §7).
-- Améliorations de sécurité **encore À FAIRE** : ajouter une **CSP** stricte sur `index.html` (le rapatriement des CDN, prérequis, est fait), durcir davantage les webviews, et à terme migrer vers `contextIsolation: true` + `preload` + IPC. Chiffrement au repos (`safeStorage`/DPAPI) : non fait (choix en pause).
-- Les cookies de session et les métadonnées de comptes restent **en clair** (voir §5).
+> Référence détaillée : **`SECURITY.md`**. Résumé :
+
+- **Fenêtre hôte** : `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`, `webviewTag: true`, preload `app-preload.js`. `app.enableSandbox()` sandboxe tous les processus de rendu. La page n'a **ni `require` ni `process`** ; elle n'a que `window.ovcr` :
+  - `files` : `selectFolder()`, `listDirectory(dir)`, `readFile(path)` → `{ok, content, readOnly}` / `{ok:false, error}`, `saveFile(path, content)` → `{ok}` / `{ok:false, error}` ;
+  - `accounts` : `load()`, `save(list)`, `restoreBackup()`, `migrateLegacy({current, backup})` ;
+  - `storage` : `pendingRevert()`, `confirmRevert()` ; `sitePermissions` : `reset()`.
+  Chaque canal IPC passe par `handle()` dans `main.js`, qui vérifie l'**expéditeur** (`isTrustedSender` : cadre principal de la fenêtre hôte, URL = exactement l'`index.html` local, comparaison par chemin, robuste aux `[ ]`/espaces/accents du dossier packagé). Pour ajouter une opération : un canal dédié dans `main.js` + une méthode dans `app-preload.js` + la validation des paramètres **dans le main**. Jamais de canal générique.
+- **CSP** (`<meta>` dans `index.html`) : `script-src 'self'` (aucun inline, aucun `eval`), `style-src 'self' 'unsafe-inline'` (Monaco + attributs `style`), `connect-src 'self'`, `worker-src 'self'`, `frame-src`/`object-src 'none'`. Ne s'applique qu'à l'interface, pas aux sites des webviews. Conséquence : **aucun `onclick`/`oninput` dans le HTML** — les boutons statiques portent `data-cmd="…"`, traité par la table `COMMANDS` de `renderer/app.js`.
+- **Monaco** charge en **mode navigateur** : `loadMonaco()` injecte `loader.js` à la première ouverture de l'éditeur, avec une URL absolue calculée par `new URL(…, location.href)` (ok en dev et en `.exe` : asar/asar.unpacked transparents). Plus de bascule `window.require`/`nodeRequire`. Les web workers fonctionnent (`worker-src 'self'`).
+- **Webviews** (`will-attach-webview`) : préférences imposées (sans Node, isolées, sandbox, preload de page supprimé — seul le preload de session d'identité tourne) ; refusées si l'URL n'est pas `https://` vers `ALLOWED_POPUP_HOSTS` ou si la partition n'est pas `persist:<profil>`. ⚠️ Un nouveau service doit donc figurer dans `ALLOWED_POPUP_HOSTS`.
+- **Navigation / popups (lot B, conservé)** : l'hôte ne navigue que vers son `index.html` et n'ouvre aucune fenêtre ; popups des webviews **et des popups** filtrées par `ALLOWED_POPUP_HOSTS` (autorisée → fenêtre sandboxée, même session ; lien web hors liste → navigateur système ; autre schéma → refusé). Aucune webview ne peut en imbriquer une autre.
+- **Fichiers** (`file-access.js`) : racines = dossiers choisis dans la boîte de dialogue ; chemins normalisés + `realpath` + confinement ; lecture 20 Mo max, binaires refusés, non-UTF-8 en lecture seule ; écriture seulement d'un fichier déjà ouvert.
+- **Autorisations** : l'interface locale (`file://`) n'a plus « tout » : seulement `clipboard-read`, `clipboard-sanitized-write`, `fullscreen` (`APP_UI_ALLOW` dans `site-permissions.js`).
+- **Échappement HTML (lot A, conservé)** : toujours obligatoire — défense en profondeur avec la CSP.
+- **Reste en clair** : cookies de session (`Partitions/`), `site-permissions.json`, préférences d'affichage. Voir SECURITY.md §6 pour toutes les limites.
 
 ## 11. Limites connues / dettes
 
@@ -198,7 +215,7 @@ Réalisé en vue du partage du `.exe` à la communauté OverCreep :
 - **UI** : ajout du **bouton « Ajouter un compte »** (`+` en tête de liste) et de l'état vide **« Créer mon premier compte »** — auparavant *aucun* moyen de créer un compte depuis l'interface.
 - **Build** : `dist/` régénéré, ancien build « AI Agentic Workbench » supprimé, zip de distribution `dist/OVCR-AI-Manager.zip` à jour (§4).
 
-Explicitement **hors périmètre** (chantiers séparés, non faits) : CSP, migration `contextIsolation`/`preload`, chiffrement au repos, découpage de `index.html`.
+Explicitement **hors périmètre** de ce lot : CSP, migration `contextIsolation`/`preload`, chiffrement au repos, découpage de `index.html` — **réalisés depuis en phase 1** (voir plus bas), sauf le chiffrement des cookies de session.
 
 ### Correctifs post-audit (pré-partage)
 
@@ -368,7 +385,18 @@ Perplexity recevait ainsi la position de l'utilisateur sans question
   sans question, réinitialisation. Validé à la main par l’utilisateur ; livré en
   **version 1.0.4** (zip `dist/OVCR-AI-Manager-1.0.4.zip`).
 
-### Note pour l'IA qui reçoit ce contexte
-Quand tu proposes une modification : précise **dans quel fichier** (quasiment toujours `index.html`, parfois `main.js`), rappelle que c'est du **JS vanilla dans un `<script>`** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
+### Phase 1 — Sécurité et fondations (novembre 2026)
 
-Quelques réflexes issus du dernier lot : **toute donnée utilisateur injectée en HTML doit passer par `escapeHtml()`** ; les nouvelles listes cliquables doivent utiliser la **délégation d'événements** (`data-*`) et non des `onclick` générés ; les **écritures de comptes passent par `saveAccounts()`** (jamais `localStorage.setItem` direct) ; une **nouvelle icône** s'ajoute dans `window.OVCR_ICONS` (`assets/icons.js`) puis s'utilise via `<span class="ic" data-icon="…">` + `hydrateIcons()`.
+- **Renderer sans Node** : `nodeIntegration:false`, `contextIsolation:true`, `sandbox:true` + `app.enableSandbox()`. Le JS d'`index.html` est sorti dans `renderer/app.js` ; tous les `require`/`ipcRenderer` remplacés par `window.ovcr` (`app-preload.js`).
+- **IPC** : canaux dédiés (`files:*`, `accounts:*`, `storage:*`, `site-permissions:reset`), expéditeur vérifié, paramètres validés dans le main. Les anciens canaux (`select-folder`, `read-directory`, `read-file`, `save-file`, `reset-site-permissions`) n'existent plus.
+- **CSP** stricte sur l'interface ; `onclick` statiques → `data-cmd`.
+- **Fichiers** : `file-access.js` (confinement au dossier choisi, binaires/encodage, écriture limitée aux fichiers ouverts).
+- **Comptes chiffrés** : `accounts-store.js` (safeStorage), migration auto depuis `localStorage` avec sauvegarde préalable, retour arrière `--revert-storage-migration`.
+- **Webviews** : préférences imposées, URL et partition validées ; popups de popups filtrées ; autorisations de l'interface locale réduites.
+- **Vérifié** (harnais Electron, userData isolé) : isolation (`require`/`process` absents), migration chiffrée sans fuite en clair, persistance, validation des saves, CSP (inline/`eval` bloqués), navigation hôte bloquée, Monaco + worker + Ctrl+S, 14 cas d'accès fichier refusés (traversée, absolu, périphérique, type, écriture non ouverte…), webview Gemini (identité Firefox intacte, sandbox, partition), 4 webviews illégitimes refusées, popup Google autorisée (même session, sandbox), popups hors liste → navigateur système, IPC d'une autre fenêtre refusé, récupération corrompu/indéchiffrable, fermeture pendant écriture, **retour arrière relu par la vraie 1.0.4**, puis re-migration. Build packagé de test (asar) vérifié, y compris depuis un chemin avec `[ ]`, espaces et accents.
+- **Validé à la main par l'utilisateur** sur son vrai profil (migration réelle réussie, comptes, sessions, services OK). Livré en **version 1.1.0** (zip `dist/OVCR-AI-Manager-1.1.0.zip`).
+
+### Note pour l'IA qui reçoit ce contexte
+Quand tu proposes une modification : précise **dans quel fichier** (le plus souvent `renderer/app.js` ou `index.html`, parfois `main.js` / un module du main), rappelle que c'est du **JS vanilla en script classique** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
+
+Réflexes : **toute donnée utilisateur injectée en HTML doit passer par `escapeHtml()`** ; **aucun script ni gestionnaire inline** (la CSP les bloque) : `data-cmd`/`data-action` + délégation ; les **écritures de comptes passent par `saveAccounts()`** ; **le renderer n'a pas Node** : un besoin système = une méthode dédiée dans `app-preload.js` + un canal `handle()` dans `main.js` + validation côté main ; une **nouvelle icône** s'ajoute dans `window.OVCR_ICONS` (`assets/icons.js`) puis s'utilise via `<span class="ic" data-icon="…">` + `hydrateIcons()`.

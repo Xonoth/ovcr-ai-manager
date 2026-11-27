@@ -13,11 +13,16 @@
 //     gestion des fenêtres, verrouillage clavier/souris, système de fichiers…).
 // Les choix « mémorisés » valent pour un SITE (origine), tous comptes
 // confondus, et sont stockés dans <userData>/site-permissions.json.
-// L'interface locale de l'app (file://) n'est pas concernée : elle a tout.
+// L'interface locale de l'app (file://) ne reçoit que le strict nécessaire
+// (presse-papiers de l'éditeur, plein écran) : elle n'a besoin ni de la
+// position, ni du micro, ni de la caméra, ni des notifications.
 
 const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// Autorisations de l'interface locale (file://).
+const APP_UI_ALLOW = new Set(['clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
 
 const ALWAYS_ALLOW = new Set([
   'clipboard-sanitized-write', 'fullscreen', 'mediaKeySystem', 'speaker-selection',
@@ -131,7 +136,7 @@ async function ask(webContents, origin, keys) {
 
 async function decide(webContents, permission, details) {
   const origin = originOf((details && (details.securityOrigin || details.requestingUrl)) || webContents.getURL());
-  if (origin === 'file://') return true;                 // interface locale de l'app
+  if (origin === 'file://') return APP_UI_ALLOW.has(permission); // interface locale de l'app
   if (ALWAYS_ALLOW.has(permission)) return true;
   if (!origin) return false;
 
@@ -164,7 +169,7 @@ function installOn(ses) {
   //   - permission non prévue -> "non".
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     const origin = originOf(requestingOrigin);
-    if (origin === 'file://') return true;
+    if (origin === 'file://') return APP_UI_ALLOW.has(permission);
     if (ALWAYS_ALLOW.has(permission)) return true;
     if (!origin) return false;
     let keys;
