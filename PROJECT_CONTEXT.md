@@ -44,6 +44,7 @@ ai-manager/
 ├── eslint.config.js    # (phase 2) ESLint — développement uniquement, exclu du .exe.
 ├── test/               # (phase 2) unit/ (node:test), integration/ (Electron réel, userData temporaire), fixtures/, helpers/ — exclu du .exe.
 ├── TESTS-MANUELS.md    # (phase 2) Ce qui ne peut PAS être testé automatiquement (services IA réels, OAuth, vraie coupure réseau…).
+├── PHASE-3.md          # Préparation de la phase 3 (chantiers, décisions, pièges) — exclu du .exe.
 ├── SECURITY.md         # Modèle de sécurité, CSP, stockage, limites restantes, pistes.
 ├── browser-identity.js # Identité navigateur des webviews/popups : Firefox sur Google, Chrome ailleurs ; FedCM désactivé — connexion Google.
 ├── browser-identity-preload.js # Preload de session : aligne navigator sur Firefox sur les pages Google.
