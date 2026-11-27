@@ -1,6 +1,6 @@
 # Sécurité — [OVCR] AI Manager
 
-État après la **phase 1 « Sécurité et fondations »** (novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**.
+État après la **phase 1 « Sécurité et fondations »** et la **phase 2 « Fiabilité et robustesse »** (novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
 
 ## 1. Modèle : qui a le droit de faire quoi
 
@@ -17,7 +17,14 @@
 
 - `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`.
 - **Preload `app-preload.js`** : expose `window.ovcr` avec une liste **fermée** de méthodes (une par opération). Jamais `ipcRenderer`, `require`, `process`, ni fonction « envoyer sur n'importe quel canal ».
-- **Chaque canal IPC vérifie l'expéditeur** (`isTrustedSender` dans `main.js`) : il faut être le cadre principal de la fenêtre hôte, chargé depuis **exactement** l'`index.html` local. Une autre fenêtre, une webview ou une popup — même avec un preload qui aurait `ipcRenderer` — est refusée.
+- **Chaque canal IPC vérifie l'expéditeur** (`isTrustedSender`, règle pure dans `security-policy.js`) : il faut être le cadre principal de la fenêtre hôte, chargé depuis **exactement** l'`index.html` local. Une autre fenêtre, une webview ou une popup — même avec un preload qui aurait `ipcRenderer` — est refusée.
+- Canaux ajoutés en phase 2, avec la même vérification :
+  - `services:open-in-browser(url)` : n'ouvre dans le navigateur système qu'une URL **https** d'un domaine de `ALLOWED_POPUP_HOSTS` (refus et trace sinon) ;
+  - `diag:report(payload)` : objet validé, textes tronqués (2 000 / 4 000 caractères), niveau « fatal » interdit, **60 rapports par minute** au plus ; tout est expurgé avant écriture ;
+  - `diag:get()` : lecture seule (versions, état du stockage sans contenu, mémoire, derniers événements expurgés) ;
+  - `diag:open-logs()` : aucun paramètre, ouvre le dossier **fixe** `userData/logs`.
+- Une erreur imprévue dans un canal est journalisée côté main ; l'interface ne reçoit qu'un message générique (`Erreur interne (<canal>)`), sans pile ni détail interne.
+- **Instance unique** (`app.requestSingleInstanceLock()`, sur le dossier de données) : deux instances n'écrivent jamais les mêmes fichiers en parallèle.
 - Navigation : la fenêtre hôte ne peut charger que son `index.html` ; elle ne peut ouvrir aucune fenêtre.
 - Autorisations (position, micro, caméra, notifications…) : l'interface n'a que le presse-papiers (éditeur) et le plein écran.
 
@@ -63,9 +70,10 @@ Pas de liste blanche d'extensions : l'éditeur sert à du code de toute sorte (`
 | Donnée | Emplacement | Protection |
 |---|---|---|
 | Comptes (noms, e-mails, profils, cooldowns) | `%APPDATA%\ai-manager\accounts.json` (+ `.bak`) | **chiffré** `safeStorage` (DPAPI : lisible seulement par ce compte Windows) |
-| Sauvegarde avant migration | `%APPDATA%\ai-manager\backups\pre-migration-*.json` | chiffrée de même |
+| Sauvegardes (`pre-migration-*`, `pre-schema-*`, `bak-preserved-*`) | `%APPDATA%\ai-manager\backups\` | copies d'enveloppes : chiffrées de même ; jamais supprimées par l'app |
 | Autorisations des sites | `%APPDATA%\ai-manager\site-permissions.json` | en clair (origines + oui/non : rien de personnel) |
 | Préférences d'affichage (largeurs, cartes repliées) | `localStorage` | en clair (non sensibles) |
+| Journal de diagnostic | `%APPDATA%\ai-manager\logs\ovcr*.log` (3 × 1 Mo max) | en clair, **expurgé** : e-mails masqués, URL réduites à l'hôte (pas de jeton OAuth), nom du compte Windows retiré des chemins ; ne contient que des identifiants techniques (id de compte, hôte, code d'erreur). Rien n'est envoyé : l'utilisateur copie le diagnostic s'il veut le partager. |
 | **Cookies / sessions des services IA** | `%APPDATA%\ai-manager\Partitions\<profil>\` | **en clair** — voir limites |
 
 ### Migration depuis la 1.0.4 (automatique, une fois)
@@ -88,7 +96,9 @@ Les comptes **actuels** sont réécrits dans le `localStorage` au format 1.0.4, 
 
 ### Récupération
 
-Fichier corrompu, ou indéchiffrable (autre compte Windows, mot de passe Windows réinitialisé par un administrateur) → modale proposant la sauvegarde. Un fichier illisible est toujours **mis de côté** (`accounts.unreadable-<date>.json`), jamais supprimé. En dernier recours, recréer un compte avec le **même nom de profil** retrouve sa session.
+Fichier corrompu, indéchiffrable (autre compte Windows, mot de passe Windows réinitialisé par un administrateur) ou **introuvable** alors qu'une sauvegarde existe → modale proposant la sauvegarde. Un fichier illisible est toujours **mis de côté** (`accounts.unreadable-<date>.json`), jamais supprimé ; si l'utilisateur continue sans restaurer, une **copie de la sauvegarde** est d'abord mise à l'abri dans `backups/` (elle ne peut plus être écrasée par les rotations suivantes). En dernier recours, recréer un compte avec le **même nom de profil** retrouve sa session.
+
+Données écrites par une **version plus récente** de l'app (schéma ou conteneur) ou dont la **migration a échoué** : affichées en **lecture seule** — ni l'interface ni le main ne les réécrivent (le main refuse `newer_schema` / `migration_pending` même si l'interface le demandait).
 
 ## 6. Limites restantes (assumées, à connaître)
 
@@ -98,6 +108,8 @@ Fichier corrompu, ou indéchiffrable (autre compte Windows, mot de passe Windows
 - `style-src 'unsafe-inline'` dans la CSP (nécessaire à Monaco et aux styles en ligne).
 - Exécutable non signé (SmartScreen) ; pas de vérification d'intégrité de `app.asar`.
 - La liste `ALLOWED_POPUP_HOSTS` fait confiance à tous les sous-domaines de ses entrées (ex. `*.google.com`).
+- Un site autorisé peut ouvrir des liens dans le navigateur système sans limite de fréquence (comportement antérieur, inchangé).
+- **Electron** : passé de 43.7.1 à **43.8.10** en 1.2.0, ce qui corrige les 4 alertes `npm audit` d'Electron (dont « high » : atténuation pour des certificats intermédiaires eMudhra compromis). Chromium est inchangé (150.0.7871.250) : l'identité présentée à Google reste la même. Attention, `npm audit --omit=dev` ne voit pas Electron (déclaré en dépendance de développement alors qu'il est **embarqué dans le .exe**) : toujours lancer `npm audit` complet. Les alertes restantes (`undici`, `glob`, `minimatch`, `@electron/asar`, `eslint`) concernent les **outils de développement** (packager, ESLint), pas le .exe.
 
 ## 7. Pistes pour la suite (non faites)
 

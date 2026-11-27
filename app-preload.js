@@ -34,5 +34,16 @@ contextBridge.exposeInMainWorld('ovcr', {
   },
   sitePermissions: {
     reset: invoke('site-permissions:reset')
+  },
+  services: {
+    // Ouvre l'adresse d'un service (https, liste blanche vérifiée côté main)
+    // dans le navigateur système.
+    openInBrowser: invoke('services:open-in-browser')
+  },
+  diag: {
+    // { level: 'info'|'warn'|'error', message, stack } — expurgé et limité côté main.
+    report: invoke('diag:report'),
+    get: invoke('diag:get'),
+    openLogs: invoke('diag:open-logs')
   }
 });

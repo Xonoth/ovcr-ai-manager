@@ -19,6 +19,8 @@
      Objectif : l'app s'affiche identiquement hors-ligne / réseau filtré, et on
      supprime tout prérequis de whitelist CDN pour une future CSP stricte. -->
 <script src="assets/icons.js"></script>
+<script src="renderer/pane-errors.js"></script>
+<script src="renderer/cooldowns.js"></script>
 <style>
   /* ===== Polices locales (chantier D) =====
      Google sert ces 3 familles en fonte VARIABLE : un seul .woff2 par sous-ensemble
@@ -204,6 +206,9 @@
   .svc-btn.cooldown-active { opacity: 0.4; filter: grayscale(50%); }
   .cooldown-btn { width: 100%; padding: 5px 4px; font-size: 10.5px; font-weight: 500; text-align: center; cursor: pointer; transition: all 0.2s; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--fg-muted); font-family: 'JetBrains Mono', monospace; }
   .cooldown-btn.active { background: var(--danger-dim); border-color: rgba(255, 77, 106, 0.3); color: var(--danger); }
+  /* États ajoutés en phase 2 : terminé (info), incohérent et confirmation (avertissement) */
+  .cooldown-btn.ended { color: var(--fg); border-color: var(--border-active); }
+  .cooldown-btn.inconsistent, .cooldown-btn.confirming { background: rgba(255,179,71,0.12); border-color: rgba(255,179,71,0.45); color: var(--warning); }
 
   /* --- Vue compacte : repli/dépli de la grille de services par carte --- */
   /* Animation de hauteur sans max-height arbitraire : la rangée de grille passe
@@ -296,6 +301,30 @@
   .toast-container { position: fixed; top: 20px; right: 20px; z-index: 200; display: flex; flex-direction: column; gap: 10px; }
   .toast { padding: 12px 18px; background: var(--bg-elevated); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); animation: toastIn 0.3s ease; display: flex; align-items: center; gap: 10px; }
   @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  /* Bandeau d'alerte PERSISTANT (stockage des comptes) : reste affiché tant
+     que le problème n'est pas réglé, contrairement aux toasts (3 s). */
+  .app-banner { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 150; max-width: min(760px, calc(100vw - 48px)); display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 16px; background: var(--bg-elevated); border: 1px solid var(--danger); border-left: 3px solid var(--danger); border-radius: var(--radius-sm); font-size: 13px; color: var(--fg); box-shadow: 0 8px 32px rgba(0,0,0,0.45); }
+  .app-banner[hidden] { display: none; }
+  .app-banner .btn { padding: 6px 12px; flex-shrink: 0; }
+  /* Diagnostic (modale d'aide) */
+  .diag-panel { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+  .diag-panel[hidden], .help-list[hidden] { display: none; }
+  .diag-text { flex: 1; min-height: 120px; max-height: 260px; overflow: auto; margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--fg-muted); font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; user-select: text; }
+  .diag-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .form-warning { margin-top: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.5; color: var(--warning); background: rgba(255,179,71,0.10); border: 1px solid rgba(255,179,71,0.35); border-radius: var(--radius-sm); }
+  .form-warning[hidden] { display: none; }
+  /* Panneaux IA : chargement masquable, écran d'erreur, bandeau hors ligne (lot 4) */
+  .pane-loading[hidden] { display: none; }
+  .pane-error { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 32px; text-align: center; background: var(--bg); overflow: auto; }
+  .pane-error__icon { font-size: 30px; color: var(--warning); }
+  .pane-error__title { font-family: 'Space Grotesk', sans-serif; font-size: 18px; font-weight: 700; color: var(--fg); }
+  .pane-error__detail { max-width: 520px; font-size: 13px; line-height: 1.55; color: var(--fg-muted); }
+  .pane-error__meta { font-size: 12px; color: var(--fg-dim); }
+  .pane-error__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
+  .pane-error__actions .btn { padding: 8px 14px; }
+  .pane-error__diag { margin: 4px 0 0; padding: 10px 12px; max-width: 520px; width: 100%; text-align: left; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--fg-muted); font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; user-select: text; }
+  .pane-error__diag[hidden] { display: none; }
+  .pane-offline { flex-shrink: 0; padding: 6px 12px; font-size: 12px; color: var(--fg); background: var(--danger-dim); border-bottom: 1px solid var(--danger); }
 </style>
 </head>
 <body>
@@ -326,7 +355,7 @@
 
   <div class="stats">
     <div class="stat-card"><div class="stat-card__label">Comptes actifs</div><div class="stat-card__value" style="color: var(--accent)" id="statActive">0</div></div>
-    <div class="stat-card"><div class="stat-card__label">IA Disponibles</div><div class="stat-card__value" style="color: var(--rose)" id="statAvailable">0</div></div>
+    <div class="stat-card"><div class="stat-card__label" title="Services sans cooldown marqué. L'app ne connaît pas l'état réel des quotas.">Hors cooldown</div><div class="stat-card__value" style="color: var(--rose)" id="statAvailable">0</div></div>
   </div>
 
   <div class="section-title section-title--accounts">
@@ -403,7 +432,9 @@
     <input type="hidden" id="editId">
     <div class="form-group"><label class="form-label">Nom du compte</label><input class="form-input" id="inputName" type="text"></div>
     <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="inputEmail" type="email"></div>
-    <div class="form-group"><label class="form-label">Nom du Profil</label><input class="form-input" id="inputProfile" type="text"></div>
+    <div class="form-group"><label class="form-label">Nom du Profil</label><input class="form-input" id="inputProfile" type="text">
+      <div class="form-warning" id="profileWarning" hidden>Changer le profil relie ce compte à une autre session de connexion : vous devrez vous reconnecter aux services. L'ancienne session reste sur le disque (remettre l'ancien nom de profil la retrouve).</div>
+    </div>
     <div class="modal__actions">
       <button class="btn" data-cmd="close-modal">Annuler</button>
       <button class="btn btn--primary" data-cmd="save-account">Enregistrer</button>
@@ -431,7 +462,18 @@
     <div class="modal__title">Comprendre les IA disponibles</div>
     <div style="color:var(--fg-muted); font-size:13px; margin-top:4px;">À quoi sert chaque service, et quand l'utiliser.</div>
     <div class="help-list" id="helpList"></div>
+    <!-- Diagnostic local (lot 3) : versions, état du stockage, mémoire, derniers
+         événements du journal. Rien n'est envoyé : l'utilisateur copie ce texte
+         s'il veut le partager (il est déjà expurgé : ni e-mail ni URL complète). -->
+    <div class="diag-panel" id="diagPanel" hidden>
+      <pre class="diag-text" id="diagText"></pre>
+      <div class="diag-actions">
+        <button class="btn" data-cmd="copy-diagnostic">Copier le diagnostic</button>
+        <button class="btn" data-cmd="open-logs">Ouvrir le dossier des journaux</button>
+      </div>
+    </div>
     <div class="modal__actions">
+      <button class="btn" data-cmd="show-diagnostic" title="Informations techniques pour comprendre un problème (rien n'est envoyé)">Diagnostic</button>
       <button class="btn" data-cmd="reset-permissions" title="Les sites redemanderont la position, le micro, la caméra, les notifications…">Réinitialiser les autorisations des sites</button>
       <button class="btn" data-cmd="close-help">Fermer</button>
     </div>

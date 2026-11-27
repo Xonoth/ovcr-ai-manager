@@ -20,6 +20,7 @@
 const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { writeAtomicTextSync, fileStamp } = require('./atomic-file');
 
 // Autorisations de l'interface locale (file://).
 const APP_UI_ALLOW = new Set(['clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
@@ -42,22 +43,71 @@ const ASKABLE = {
 let storeFile = null;
 let decisions = null; // { "<origine>|<clé>": "allow" | "deny" }
 
+// Version de schéma du fichier, rangée sous une clé réservée "$schema" (sans
+// « | ») : la 1.1.0 l'ignore naturellement (elle ne cherche que des clés
+// "<origine>|<clé>"). Fichier sans "$schema" = schéma 1. Fichier d'un schéma
+// plus récent : lu, mais jamais réécrit par cette version.
+const SCHEMA = 1;
+let readOnly = false;
+
+// Ne garde que des entrées bien formées : "<origine>|<clé>" -> "allow" | "deny".
+// Objet sans prototype : une clé "__proto__" reste une donnée ordinaire.
+function sanitizeDecisions(data) {
+  const out = Object.create(null);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof k === 'string' && k.length <= 400 && k.includes('|') && (v === 'allow' || v === 'deny')) out[k] = v;
+  }
+  return out;
+}
+
 function load(app) {
   if (decisions) return decisions;
   storeFile = path.join(app.getPath('userData'), 'site-permissions.json');
+  let text = null;
   try {
-    decisions = JSON.parse(fs.readFileSync(storeFile, 'utf8')) || {};
-  } catch (_) {
-    decisions = {}; // absent ou illisible : on repart de zéro (on redemandera)
+    text = fs.readFileSync(storeFile, 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn('[permissions] lecture impossible :', err.code || err.message);
+  }
+  if (text === null) {
+    decisions = Object.create(null); // premier lancement : on demandera
+    return decisions;
+  }
+  let json, parsed;
+  try { json = JSON.parse(text); parsed = sanitizeDecisions(json); } catch (_) { parsed = null; }
+  if (parsed) {
+    decisions = parsed;
+    const schema = json.$schema === undefined ? 1 : json.$schema;
+    if (!Number.isInteger(schema) || schema > SCHEMA) {
+      readOnly = true;
+      console.warn('[permissions] fichier d\'une version plus récente (schéma ' + schema + ') : lu, non réécrit');
+    }
+  } else {
+    // Illisible : mis de côté (jamais écrasé en silence), on redemandera.
+    // Aucune autorisation n'est accordée par défaut : le pire cas est une
+    // question posée de nouveau.
+    decisions = Object.create(null);
+    const aside = storeFile.replace(/\.json$/, '') + `.unreadable-${fileStamp()}.json`;
+    try {
+      fs.renameSync(storeFile, aside);
+      console.warn('[permissions] fichier illisible mis de côté :', path.basename(aside));
+    } catch (err) {
+      console.warn('[permissions] fichier illisible, mise de côté impossible :', err.code || err.message);
+    }
   }
   return decisions;
 }
 
 function save() {
+  if (readOnly) {
+    console.warn('[permissions] choix gardé pour cette session seulement (fichier d\'une version plus récente)');
+    return;
+  }
   try {
-    fs.writeFileSync(storeFile, JSON.stringify(decisions, null, 2), 'utf8');
+    writeAtomicTextSync(storeFile, JSON.stringify({ $schema: SCHEMA, ...decisions }, null, 2));
   } catch (err) {
-    console.warn('[permissions] sauvegarde impossible :', err.message);
+    console.warn('[permissions] sauvegarde impossible :', err.code || err.message);
   }
 }
 
@@ -79,7 +129,7 @@ function keysFor(permission, details) {
   }
   if (permission === 'openExternal') {
     let scheme = 'inconnu';
-    try { scheme = new URL(details.externalURL).protocol; } catch (_) {}
+    try { scheme = new URL(details.externalURL).protocol; } catch (_) { /* URL illisible : schéma « inconnu » (refusé) */ }
     return [`openExternal:${scheme}`];
   }
   return [permission];
@@ -197,7 +247,7 @@ function install(app) {
 // Oublie tous les choix mémorisés (bouton de la page d'aide). Les sites
 // redemanderont à leur prochaine demande.
 function reset() {
-  decisions = {};
+  decisions = Object.create(null);
   if (storeFile) save();
 }
 

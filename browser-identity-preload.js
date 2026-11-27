@@ -24,8 +24,8 @@ if (host === 'google.com' || host.endsWith('.google.com')) {
           Object.defineProperty(proto, name, { get: () => value, configurable: true, enumerable: true });
         } catch (_) { /* propriété verrouillée : on laisse */ }
       };
-      try { delete proto.userAgentData; } catch (_) {}
-      try { delete window.chrome; } catch (_) {}
+      try { delete proto.userAgentData; } catch (_) { /* déjà absent ou verrouillé : sans effet */ }
+      try { delete window.chrome; } catch (_) { /* déjà absent ou verrouillé : sans effet */ }
       define('vendor', '');
       define('productSub', '20100101');
       define('appVersion', platform.appVersion);

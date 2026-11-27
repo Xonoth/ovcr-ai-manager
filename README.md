@@ -20,13 +20,15 @@ Pensé à l'origine pour la communauté [OverCreep](https://overcreep.ovh), publ
 
 - **Multi-comptes isolés** : chaque compte utilise une partition Electron dédiée (`persist:<profil>`) — cookies et sessions strictement séparés. L'unicité du profil est imposée par l'app.
 - **9 services IA intégrés** : Claude, ChatGPT, Gemini, Perplexity, Z.ai, Grok, Leonardo AI (images), Suno (musique), Meshy AI (3D). En ajouter un est un pattern simple et documenté (voir [Contribuer](#contribuer)).
-- **Suivi de quota (« cooldown ») 24 h** par service et par compte : un clic sur « Épuiser (24h) » marque le service comme vidé, avec compte à rebours visible et réactivation automatique.
+- **Suivi de quota (« cooldown ») 24 h** par service et par compte : un clic sur « Épuiser (24h) » marque le service comme vidé, avec compte à rebours visible et réactivation automatique (« ✓ Fini 14:05 »). Le suivi est **manuel** : l'app ne lit pas le quota réel des services. Annuler un cooldown en cours demande une confirmation ; une échéance incohérente (horloge de l'ordinateur modifiée) est signalée.
 - **1 ou 2 panneaux IA** côte à côte, colonnes redimensionnables, bouton « Fermer le panneau 2 » pour libérer la mémoire de la webview cachée.
 - **Palette rapide (Ctrl+K)** : ouvrir n'importe quel service avec n'importe quel compte au clavier.
 - **Page d'aide intégrée** (bouton `?`) : description et cas d'usage de chaque IA, pour les utilisateurs qui ne les connaissent pas toutes.
 - **Éditeur de code intégré** (Monaco, celui de VS Code) avec explorateur de fichiers local — chargé paresseusement au premier clic, avec éditeur de secours si Monaco échoue.
 - **Interface 100 % locale** : polices et icônes embarquées, aucun CDN, aucune télémétrie — l'app n'envoie rien à aucun serveur ; seuls les sites des IA sont contactés, dans leurs panneaux.
-- **Stockage résilient** : sauvegarde automatique d'une génération des données de comptes, récupération proposée en cas de corruption.
+- **Stockage résilient** : écritures atomiques (jamais de fichier à moitié écrit, même en cas de coupure), sauvegarde automatique de la génération précédente, récupération proposée en cas de corruption ou de fichier manquant, aucune sauvegarde jamais écrasée sans copie, format de données versionné (une version plus ancienne relit toujours les comptes).
+- **Erreurs claires dans les panneaux IA** : service injoignable, pas de connexion, certificat refusé, panneau planté ou figé → message explicite et actions (Réessayer, Recharger le service, Ouvrir dans le navigateur, Fermer le panneau, informations de diagnostic). Jamais confondu avec un quota.
+- **Diagnostic local** (bouton `?` → « Diagnostic ») : versions, état du stockage, mémoire, derniers événements — expurgés (aucun e-mail ni URL complète), à copier pour signaler un problème. Journal dans `%APPDATA%\ai-manager\logs`. Rien n'est envoyé.
 
 ## Installation
 
@@ -36,14 +38,20 @@ Récupérez le zip de la [dernière release](../../releases), décompressez le d
 
 ### Développement
 
-Prérequis : **Windows 10/11** (seule plateforme testée — `main.js` et le packaging ciblent win32 ; un portage Mac/Linux demanderait au minimum de revoir le packaging), **Node.js 18+** et npm.
+Prérequis : **Windows 10/11** (seule plateforme testée — `main.js` et le packaging ciblent win32 ; un portage Mac/Linux demanderait au minimum de revoir le packaging), **Node.js 22+** et npm.
 
 ```bash
 git clone <url-du-repo>
 cd ai-manager
 npm install
-npm start          # lance l'app en dev (electron .)
+npm start               # lance l'app en dev (electron .)
+npm test                # tests unitaires (node:test)
+npm run test:electron   # tests d'intégration (vrai Electron, données temporaires, sans réseau)
+npm run test:perf       # mesures mémoire / fuites
+npm run lint            # ESLint
 ```
+
+Les tests n'utilisent **jamais** votre vrai profil (`%APPDATA%\ai-manager`) ni le réseau : chaque scénario d'intégration tourne dans un dossier temporaire avec des pages de service factices. Ce qui ne peut pas être automatisé (connexions réelles aux services, OAuth, vraie coupure réseau) est listé dans [TESTS-MANUELS.md](TESTS-MANUELS.md).
 
 ### Construire l'exécutable
 
@@ -61,10 +69,15 @@ Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet �
 ai-manager/
 ├── index.html              # Interface : HTML + CSS + CSP
 ├── renderer/app.js         # Logique de l'interface (JS vanilla, sans accès Node)
+├── renderer/cooldowns.js   # États et libellés des cooldowns (fonctions pures)
+├── renderer/pane-errors.js # Messages d'erreur des panneaux IA (fonctions pures)
 ├── app-preload.js          # Pont minimal interface -> processus principal (window.ovcr)
-├── main.js                 # Process principal Electron : fenêtre, IPC validés, durcissement navigation/popups/webviews
+├── main.js                 # Process principal Electron : instance unique, fenêtre, IPC validés, durcissement navigation/popups/webviews
+├── security-policy.js      # Règles de sécurité pures (liste blanche, partitions, expéditeur IPC)
+├── atomic-file.js          # Écriture atomique des fichiers de données
+├── diagnostics.js          # Journal local expurgé + erreurs non interceptées
 ├── file-access.js          # Accès aux fichiers de l'explorateur/éditeur (validation des chemins)
-├── accounts-store.js       # Stockage chiffré des comptes (safeStorage) + migration/retour arrière
+├── accounts-store.js       # Stockage chiffré des comptes (safeStorage), schéma versionné, migrations, récupération, retour arrière
 ├── browser-identity.js     # Identité navigateur (Firefox sur Google, Chrome ailleurs) pour la connexion Google
 ├── browser-identity-preload.js # Preload : aligne ce que voient les pages Google
 ├── site-permissions.js     # Autorisations des sites : question à l'utilisateur au lieu d'un accord d'office
@@ -72,6 +85,9 @@ ai-manager/
 │   ├── icons.js            # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
 │   └── fonts/              # Polices WOFF2 locales (Space Grotesk, Inter, JetBrains Mono)
 ├── scripts/prune-locales.js # Post-build : purge des locales Chromium inutilisées
+├── test/                   # Tests unitaires (node:test) et d'intégration (Electron) — exclus du .exe
+├── eslint.config.js        # ESLint (développement uniquement)
+├── TESTS-MANUELS.md        # Vérifications à faire à la main (services réels, OAuth, réseau…)
 ├── PROJECT_CONTEXT.md      # Documentation interne détaillée (architecture, historique des chantiers)
 ├── SECURITY.md             # Modèle de sécurité, stockage, limites restantes
 └── DISTRIBUTION-LISEZ-MOI.txt # Notice utilisateur jointe au zip distribué
@@ -97,7 +113,8 @@ Le détail complet (modèle, migration, retour arrière, limites) est dans [SECU
 - Échappement HTML systématique de toute donnée utilisateur injectée dans le DOM ; aucun `onclick` généré dynamiquement (délégation d'événements par `data-*`).
 - La fenêtre hôte ne peut pas naviguer vers une URL distante ni ouvrir de fenêtre ; les popups des webviews sont filtrées par **liste blanche d'origines** (les 9 services + fournisseurs OAuth courants), tout le reste part dans le navigateur système.
 - **Autorisations des sites demandées, plus accordées d'office** : position, micro, caméra, notifications, lecture du presse-papiers, capture d'écran et ouverture d'applications externes déclenchent une question (« Autoriser / Refuser », mémorisable par site). Le reste (USB, MIDI, série…) est refusé. Bouton « Réinitialiser les autorisations des sites » dans la page d'aide (`?`).
-- Garde-fous divers : unicité des profils (pas de partage de session accidentel), limite de taille des fichiers ouverts dans l'éditeur, stockage tolérant à la corruption avec backup.
+- Garde-fous divers : unicité des profils (pas de partage de session accidentel), limite de taille des fichiers ouverts dans l'éditeur, stockage tolérant à la corruption avec backup, **une seule instance** de l'app à la fois (pas d'écritures concurrentes).
+- Journal de diagnostic **local et expurgé** ; « Ouvrir dans le navigateur » n'accepte que l'adresse https d'un service connu.
 
 Les issues de sécurité sont bienvenues — merci de les signaler de façon responsable.
 

@@ -1,6 +1,6 @@
 {
   "name": "ai-manager",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "[OVCR] AI Manager - gestionnaire multi-comptes IA",
   "main": "main.js",
   "author": "X'o-noth",
@@ -8,12 +8,19 @@
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-packager . \"[OVCR] AI Manager\" --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --app-version=1.1.0 --asar.unpack=**/monaco-editor/** --ignore=\"monaco-editor/(dev|esm|min-maps)\" --ignore=\"monaco-editor/(CHANGELOG|ThirdPartyNotices|README)\" --ignore=\"editor\\.main\\.nls\\.[a-z-]+\\.js\" --ignore=\"^/(PROJECT_CONTEXT\\.md|README\\.md|SECURITY\\.md|THIRD-PARTY-NOTICES\\.md|DISTRIBUTION-LISEZ-MOI\\.txt|\\.gitignore)$\" && node scripts/prune-locales.js"
+    "test": "node --test --test-reporter=spec \"test/unit/**/*.test.js\"",
+    "test:electron": "node test/integration/run.js",
+    "test:perf": "electron --js-flags=--expose-gc test/integration/perf.js",
+    "lint": "eslint .",
+    "dist": "electron-packager . \"[OVCR] AI Manager\" --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --app-version=1.2.0 --asar.unpack=**/monaco-editor/** --ignore=\"monaco-editor/(dev|esm|min-maps)\" --ignore=\"monaco-editor/(CHANGELOG|ThirdPartyNotices|README)\" --ignore=\"editor\\.main\\.nls\\.[a-z-]+\\.js\" --ignore=\"^/(PROJECT_CONTEXT\\.md|README\\.md|SECURITY\\.md|TESTS-MANUELS\\.md|THIRD-PARTY-NOTICES\\.md|DISTRIBUTION-LISEZ-MOI\\.txt|\\.gitignore)$\" --ignore=\"^/test($|/)\" --ignore=\"^/eslint\\.config\\.js$\" && node scripts/prune-locales.js"
   },
   "keywords": [],
   "devDependencies": {
     "@electron/packager": "^20.3.0",
-    "electron": "^43.7.1"
+    "@eslint/js": "10.0.1",
+    "electron": "^43.8.10",
+    "eslint": "10.14.0",
+    "globals": "17.14.0"
   },
   "dependencies": {
     "monaco-editor": "^0.45.0"

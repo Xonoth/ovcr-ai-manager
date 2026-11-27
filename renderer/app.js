@@ -28,6 +28,69 @@ function escapeHtml(value) {
 // mais l'app reste utilisable.
 if (typeof window.hydrateIcons !== 'function') window.hydrateIcons = function () {};
 
+// === Diagnostics (phase 2, lot 3) ===
+// Les avertissements/erreurs de l'interface et les erreurs JavaScript non
+// interceptées partent dans le journal local du processus principal
+// (diagnostics.js : expurgé, limité en débit). Rien n'est envoyé sur Internet.
+// La console reste inchangée (même affichage dans les DevTools).
+const diag = (() => {
+  const api = window.ovcr && window.ovcr.diag;
+  const nativeError = console.error.bind(console);
+  const fmt = (a) => {
+    if (a instanceof Error) return a.name + ': ' + a.message;
+    if (typeof a === 'string') return a;
+    try { return JSON.stringify(a); } catch (_) { return String(a); }
+  };
+  function report(level, message, stack) {
+    if (!api) return;
+    // Jamais console.error ici (boucle) : on retombe sur la console native.
+    api.report({ level, message: String(message).slice(0, 2000), stack: stack ? String(stack).slice(0, 4000) : undefined })
+      .catch(e => nativeError('[diag] rapport impossible :', e && e.message));
+  }
+  for (const level of ['warn', 'error']) {
+    const native = console[level].bind(console);
+    console[level] = (...args) => { native(...args); report(level, args.map(fmt).join(' ')); };
+  }
+  // Erreur visible pour l'utilisateur : une fois toutes les 10 s au plus.
+  let lastNotice = 0;
+  function notice() {
+    if (Date.now() - lastNotice < 10000 || typeof window.__ovcrToast !== 'function') return;
+    lastNotice = Date.now();
+    window.__ovcrToast('Une erreur interne est survenue (détails : « ? » puis « Diagnostic »).', 'error');
+  }
+  window.addEventListener('error', (e) => {
+    report('error', 'erreur non interceptée : ' + (e.message || 'inconnue') + (e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : ''), e.error && e.error.stack);
+    notice();
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    report('error', 'promesse rejetée non traitée : ' + (r && r.message || r), r && r.stack);
+    notice();
+  });
+  return { report };
+})();
+
+// Écran affiché si le démarrage échoue en cours de route : jamais une
+// interface à moitié construite et muette.
+function showStartupError(err) {
+  diag.report('error', '[app] démarrage impossible : ' + (err && err.message || err), err && err.stack);
+  const box = document.createElement('div');
+  box.className = 'modal-overlay open';
+  box.style.zIndex = '300';
+  box.innerHTML = '<div class="modal"><div class="modal__title">L\'application n\'a pas pu démarrer</div>'
+    + '<div style="color:var(--fg-muted); font-size:13px; margin:8px 0 4px;">Une erreur interne a interrompu le démarrage. Vos comptes ne sont pas modifiés. '
+    + 'Essayez de recharger ; si le problème continue, les détails techniques sont dans le dossier des journaux.</div>'
+    + '<div class="modal__actions"><button class="btn" data-startup="logs">Ouvrir le dossier des journaux</button>'
+    + '<button class="btn btn--primary" data-startup="reload">Recharger</button></div></div>';
+  box.addEventListener('click', (e) => {
+    const action = e.target.closest('[data-startup]');
+    if (!action) return;
+    if (action.getAttribute('data-startup') === 'reload') location.reload();
+    else if (window.ovcr && window.ovcr.diag) window.ovcr.diag.openLogs().catch(e => console.warn('[diag] dossier des journaux :', e && e.message));
+  });
+  document.body.appendChild(box);
+}
+
 // === Démarrage ===
 // L'application démarre IMMÉDIATEMENT et NE DÉPEND PAS de Monaco.
 // Monaco (l'éditeur de code) est chargé EN LOCAL depuis node_modules et reste
@@ -45,7 +108,10 @@ function ensureMonacoLoaded() {
   if (c) c.innerHTML = '<div style="padding:14px; font-size:12px; color:var(--fg-dim); font-family:\'JetBrains Mono\',monospace;">Chargement de l\'éditeur…</div>';
   loadMonaco();
 }
-initApp().catch(err => console.error('[app] démarrage :', err));
+initApp().catch(err => {
+  console.error('[app] démarrage :', err);
+  showStartupError(err);
+});
 
 // Monaco en mode NAVIGATEUR : le loader AMD (loader.js) n'est injecté qu'au
 // premier besoin, puis charge editor.main par balises <script> locales (CSP
@@ -103,6 +169,13 @@ async function initApp() {
     document.body.innerHTML = '<div style="margin:auto; padding:32px; color:#ff4d6a; font-family:sans-serif;">Erreur interne : le pont sécurisé (preload) n\'est pas chargé. Réinstallez l\'application.</div>';
     return;
   }
+  // Toasts accessibles aux gestionnaires d'erreurs globaux (définis hors initApp).
+  window.__ovcrToast = (msg, type) => showToast(msg, type);
+
+  // Modules locaux chargés par index.html avant ce script. Absents (fichier
+  // manquant dans une installation abîmée) : écran d'erreur de démarrage.
+  const CD = window.OVCRCooldowns;
+  if (!CD) throw new Error('module renderer/cooldowns.js non chargé');
 
   const SERVICES = [
     { id: 'claude', name: 'Claude', url: 'https://claude.ai/new', cssClass: 'svc-claude' },
@@ -172,7 +245,8 @@ async function initApp() {
   const LEGACY_BACKUP_KEY = 'ai_accounts_backup';
 
   function legacyGet(key) {
-    try { return localStorage.getItem(key); } catch (_) { return null; }
+    try { return localStorage.getItem(key); }
+    catch (e) { console.warn('[storage] localStorage illisible :', e.message); return null; }
   }
 
   // Enregistre la liste de comptes. L'envoi est IMMÉDIAT et porte un
@@ -180,28 +254,105 @@ async function initApp() {
   // traite les écritures une par une, dans l'ordre d'arrivée, valide les
   // données et conserve la génération précédente en sauvegarde. Il retarde
   // aussi la fermeture de l'app tant qu'une écriture est en cours.
+  //
+  // Écritures BLOQUÉES tant que l'état du stockage est inconnu (lecture des
+  // comptes en échec) : enregistrer la liste vide affichée écraserait les vrais
+  // comptes (audit phase 2, C2). Un échec d'enregistrement laisse un bandeau
+  // persistant (et non un simple toast de 3 s) avec « Réessayer » (M5).
+  let storageWritable = true;
+  let saveSeq = 0;
   function saveAccounts(list) {
+    if (!storageWritable) {
+      console.warn('[storage] écriture ignorée : comptes non chargés');
+      return false;
+    }
     let snapshot;
     try { snapshot = JSON.parse(JSON.stringify(list)); }
     catch (e) { console.error('[storage] liste de comptes non sérialisable :', e); return false; }
+    const seq = ++saveSeq;
+    const failed = (detail) => {
+      console.error('[storage] échec écriture des comptes :', detail);
+      // Seul l'échec de la DERNIÈRE écriture compte (une plus récente qui a
+      // réussi contient déjà tout).
+      if (seq === saveSeq) {
+        showStorageBanner('save-failed',
+          'Le dernier enregistrement des comptes a échoué' + (detail && typeof detail === 'string' ? ' (' + detail + ')' : '')
+          + ' : vos dernières modifications ne sont pas encore sauvegardées.',
+          'Réessayer', () => saveAccounts(accounts));
+      }
+    };
     api.accounts.save(snapshot)
       .then(res => {
-        if (!res || !res.ok) {
-          console.error('[storage] échec écriture des comptes :', res && res.error);
-          showToast('Impossible d\'enregistrer les comptes' + (res && res.error ? ' (' + res.error + ')' : ''), 'error');
-        }
+        if (!res || !res.ok) failed(res && res.error);
+        else if (seq === saveSeq) hideStorageBanner('save-failed');
       })
-      .catch(e => {
-        console.error('[storage] échec écriture des comptes :', e);
-        showToast('Impossible d\'enregistrer les comptes', 'error');
-      });
+      .catch(e => failed(e && e.message));
     return true;
+  }
+
+  // Refuse une modification (avec explication) si le stockage n'est pas sûr.
+  function ensureWritable() {
+    if (storageWritable) return true;
+    const why = {
+      newer: 'comptes enregistrés par une version plus récente (lecture seule)',
+      migration_failed: 'mise à jour du format des comptes non aboutie (lecture seule)'
+    }[bannerKind] || 'comptes non chargés, utilisez « Réessayer »';
+    showToast('Modification impossible pour ne rien écraser : ' + why + '.', 'error');
+    return false;
+  }
+
+  // Bandeau d'alerte persistant (un seul à la fois ; id = nature du problème).
+  let bannerKind = null;
+  function showStorageBanner(kind, message, actionLabel, action) {
+    let el = document.getElementById('storageBanner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'storageBanner';
+      el.className = 'app-banner';
+      el.setAttribute('role', 'alert');
+      document.body.appendChild(el);
+    }
+    bannerKind = kind;
+    el.textContent = '';
+    const text = document.createElement('span');
+    text.textContent = message; // textContent : aucune interprétation HTML
+    el.appendChild(text);
+    if (actionLabel && action) {
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = actionLabel;
+      btn.addEventListener('click', action);
+      el.appendChild(btn);
+    }
+    el.hidden = false;
+  }
+  function hideStorageBanner(kind) {
+    const el = document.getElementById('storageBanner');
+    if (el && (!kind || bannerKind === kind)) { el.hidden = true; bannerKind = null; }
+  }
+
+  // Copie de secours lue directement (migration impossible) : jamais validée
+  // par le main -> on ne garde que des objets et on force des textes.
+  function normalizeLegacyList(parsed) {
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .filter(a => a && typeof a === 'object' && !Array.isArray(a) && typeof a.id === 'string' && a.profile != null)
+      .map(a => ({
+        ...a,
+        name: String(a.name == null ? '' : a.name),
+        email: String(a.email == null ? '' : a.email),
+        profile: String(a.profile),
+        cooldowns: a.cooldowns && typeof a.cooldowns === 'object' && !Array.isArray(a.cooldowns) ? a.cooldowns : {}
+      }));
   }
 
   // Fondation réutilisable pour une future fonctionnalité d'export/import JSON
   // (ne pas coder le backup « en dur » : ces deux fonctions serviront à l'UI).
+  // eslint-disable-next-line no-unused-vars -- fondation documentée pour une future UI d'export
   function exportAccountsJSON() { return JSON.stringify(accounts, null, 2); }
+  // eslint-disable-next-line no-unused-vars -- fondation documentée pour une future UI d'import
   function importAccountsJSON(text) {
+    if (!storageWritable) throw new Error('Comptes non chargés : import impossible.');
     const parsed = JSON.parse(text); // peut throw : l'appelant (UI) gère l'erreur
     if (!Array.isArray(parsed)) throw new Error('Format invalide : un tableau de comptes est attendu.');
     accounts = parsed;
@@ -214,7 +365,10 @@ async function initApp() {
   // Retour arrière demandé (lancement avec --revert-storage-migration) : on
   // réécrit les comptes dans le localStorage au format 1.0.4, le processus
   // principal met ses fichiers de côté puis ferme l'app.
-  const revert = await api.storage.pendingRevert().catch(() => null);
+  const revert = await api.storage.pendingRevert().catch(e => {
+    console.error('[storage] vérification du retour arrière impossible :', e);
+    return null;
+  });
   if (revert) {
     if (revert.ok) {
       try {
@@ -247,7 +401,8 @@ async function initApp() {
         if (m && m.ok) {
           // Copie chiffrée vérifiée côté main (+ sauvegarde préalable dans
           // backups/) : la copie en clair peut disparaître.
-          try { localStorage.removeItem(LEGACY_STORE_KEY); localStorage.removeItem(LEGACY_BACKUP_KEY); } catch (_) {}
+          try { localStorage.removeItem(LEGACY_STORE_KEY); localStorage.removeItem(LEGACY_BACKUP_KEY); }
+          catch (e) { console.warn('[storage] ancienne copie en clair non effacée (sera ignorée) :', e.message); }
           console.log('[storage] comptes migrés depuis localStorage (chiffrement : ' + m.encrypted + ')');
           loadResult = await api.accounts.load();
         } else {
@@ -255,35 +410,130 @@ async function initApp() {
           // effacée) ; la prochaine écriture créera le nouveau stockage.
           console.error('[storage] migration impossible :', m && m.error);
           showToast('Migration du stockage des comptes impossible : ancienne copie conservée.', 'warning');
-          try {
-            const parsed = JSON.parse(legacy);
-            if (Array.isArray(parsed)) loadResult = { status: 'ok', accounts: parsed };
-          } catch (_) { /* ancienne copie illisible : liste vide, rien n'est écrasé */ }
+          let list = null;
+          try { list = normalizeLegacyList(JSON.parse(legacy)); }
+          catch (e) { console.warn('[storage] ancienne copie illisible, liste vide (rien n\'est écrasé) :', e.message); }
+          if (list) loadResult = { status: 'ok', accounts: list };
         }
       }
     }
-    if (loadResult.status === 'ok' && Array.isArray(loadResult.accounts)) accounts = loadResult.accounts;
-    else if (loadResult.status === 'corrupt' || loadResult.status === 'undecryptable') dataCorrupt = true;
-    // 'empty' -> accounts reste []
+    applyLoadResult(loadResult);
   } catch (e) {
     console.error('[storage] lecture des comptes impossible :', e);
+    applyLoadResult(null);
   }
 
+  // Interprète la réponse de api.accounts.load(). Tout état non reconnu
+  // (exception IPC, réponse inattendue) passe en mode protégé : liste vide
+  // affichée MAIS écritures bloquées, bandeau avec « Réessayer ».
+  function applyLoadResult(res) {
+    loadResult = res;
+    dataCorrupt = false;
+    const status = res && res.status;
+    if (status === 'ok' && Array.isArray(res.accounts)) {
+      accounts = res.accounts;
+      storageWritable = true;
+      if (res.migrated) console.log(`[storage] données mises à jour (schéma ${res.migrated.from} -> ${res.migrated.to}), sauvegarde : ${res.migrated.backupFile}`);
+    } else if ((status === 'newer' || status === 'migration_failed') && Array.isArray(res.accounts)) {
+      // Comptes affichés et utilisables (ouvrir un service), mais JAMAIS
+      // réécrits : données d'une version plus récente de l'app, ou mise à
+      // jour des données qui n'a pas abouti (données d'origine intactes).
+      accounts = res.accounts;
+      storageWritable = false;
+      showStorageBanner(status,
+        status === 'newer'
+          ? 'Ces comptes ont été enregistrés par une version plus récente de l\'application. Lecture seule : mettez l\'application à jour pour les modifier.'
+          : 'La mise à jour du format des comptes a échoué. Vos données d\'origine sont intactes ; l\'application les affiche en lecture seule.');
+    } else if (status === 'empty') {
+      accounts = [];
+      storageWritable = true;
+    } else if (status === 'corrupt' || status === 'undecryptable' || status === 'missing') {
+      // État connu : l'utilisateur choisit (restaurer ou continuer). Les
+      // écritures restent possibles : le main met de côté le fichier illisible
+      // et une copie de la sauvegarde avant toute rotation.
+      accounts = [];
+      dataCorrupt = true;
+      storageWritable = true;
+    } else {
+      accounts = [];
+      storageWritable = false;
+      showStorageBanner('load-failed',
+        'Les comptes n\'ont pas pu être chargés. Les modifications sont désactivées pour ne rien écraser.',
+        'Réessayer', retryLoadAccounts);
+    }
+  }
+
+  async function retryLoadAccounts() {
+    let res = null;
+    try { res = await api.accounts.load(); }
+    catch (e) { console.error('[storage] nouvelle lecture impossible :', e); }
+    applyLoadResult(res);
+    if (!storageWritable) { showToast('Toujours impossible de charger les comptes.', 'error'); return; }
+    hideStorageBanner('load-failed');
+    migrateOldAccounts();
+    renderAccounts();
+    if (dataCorrupt) showRecoveryUI();
+    else showToast('Comptes chargés');
+  }
+
+  // === Préférences d'affichage (localStorage, non sensibles) ===
+  // Clés : ide_w, explorer_w (largeurs « 123px »), collapsed_accounts (ids).
+  // Versionnées par `prefs_schema` (absent = 1). Une valeur invalide est
+  // ignorée (retour au défaut), jamais bloquante. Si les préférences viennent
+  // d'une version plus récente, on les lit mais on ne les réécrit pas.
+  // Une préférence non enregistrée n'est pas grave (seulement l'affichage) :
+  // on le signale dans la console, sans alerter l'utilisateur.
+  const PREFS_SCHEMA = 1;
+  const prefs = (() => {
+    let readOnly = false;
+    try {
+      const stored = localStorage.getItem('prefs_schema');
+      const v = stored == null ? 1 : Number(stored);
+      if (!Number.isInteger(v) || v > PREFS_SCHEMA) {
+        readOnly = true;
+        console.warn('[prefs] préférences d\'une version plus récente (schéma ' + stored + ') : lues, non réécrites');
+      } else if (stored == null) {
+        localStorage.setItem('prefs_schema', String(PREFS_SCHEMA));
+      }
+    } catch (e) {
+      readOnly = true;
+      console.warn('[prefs] localStorage indisponible, préférences par défaut :', e.message);
+    }
+    return {
+      get(key) {
+        try { return localStorage.getItem(key); }
+        catch (e) { console.warn('[prefs] lecture impossible :', key, e.message); return null; }
+      },
+      set(key, value) {
+        if (readOnly) return;
+        try { localStorage.setItem(key, value); }
+        catch (e) { console.warn('[prefs] préférence non enregistrée :', key, e.message); }
+      },
+      // Largeur mémorisée : « <nombre>px » raisonnable, sinon null.
+      width(key) {
+        const v = this.get(key);
+        if (v == null) return null;
+        if (/^\d{2,5}px$/.test(v)) return v;
+        console.warn('[prefs] largeur invalide ignorée :', key);
+        return null;
+      }
+    };
+  })();
+
   // Vue compacte : ids des comptes dont la grille de services est repliée.
-  // Persisté dans localStorage (clé dédiée, même modèle défensif que ide_w :
-  // une valeur absente/illisible retombe sur le défaut = tout déplié).
+  // Une valeur absente/illisible retombe sur le défaut = tout déplié.
   const COLLAPSED_KEY = 'collapsed_accounts';
   let collapsedAccounts = new Set();
   try {
-    const saved = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]');
+    const saved = JSON.parse(prefs.get(COLLAPSED_KEY) || '[]');
     if (Array.isArray(saved)) collapsedAccounts = new Set(saved.filter(x => typeof x === 'string'));
-  } catch (e) { console.warn('[storage] états de repli ignorés :', e); }
+  } catch (e) { console.warn('[prefs] états de repli ignorés :', e.message); }
 
   // Écrit l'état de repli en purgeant les ids de comptes supprimés
   // (la clé ne grossit pas indéfiniment au fil des suppressions).
   function saveCollapsed() {
     collapsedAccounts = new Set([...collapsedAccounts].filter(id => accounts.some(a => a.id === id)));
-    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedAccounts])); } catch (e) {}
+    prefs.set(COLLAPSED_KEY, JSON.stringify([...collapsedAccounts]));
   }
 
   window.toggleCardCollapse = function(accId) {
@@ -328,6 +578,22 @@ async function initApp() {
         if (!acc.services.includes(sid)) { acc.services.push(sid); needsUpdate = true; }
         if (acc.cooldowns[sid] === undefined) { acc.cooldowns[sid] = 0; needsUpdate = true; }
       });
+    });
+    // Profil vide ou invalide (accepté sans contrôle par la 1.0.4) : le main
+    // refuse alors d'enregistrer TOUTE la liste, et ce compte ne pouvait de
+    // toute façon ouvrir aucun service (partition « persist: » vide refusée).
+    // On lui attribue le premier profil libre, et on le dit (audit phase 2).
+    const used = new Set(accounts.map(a => a.profile));
+    accounts.forEach(acc => {
+      const p = typeof acc.profile === 'string' ? acc.profile : '';
+      if (p && p.length <= 200 && !/[\u0000-\u001f\u007f]/.test(p)) return;
+      let n = 1;
+      while (used.has('profil_' + n)) n++;
+      acc.profile = 'profil_' + n;
+      used.add(acc.profile);
+      needsUpdate = true;
+      console.warn('[storage] profil invalide remplacé pour le compte', acc.id);
+      showToast(`Le compte « ${acc.name} » n'avait pas de profil valide : « ${acc.profile} » lui a été attribué.`, 'warning');
     });
     if (needsUpdate) saveAccounts(accounts);
   }
@@ -448,25 +714,29 @@ async function initApp() {
       const id = escapeHtml(acc.id);
       const isActive = acc.id === activeAccountId;
       const isCollapsed = collapsedAccounts.has(acc.id);
-      // Résumé « N/7 » de la carte repliée : même test de disponibilité que
-      // updateStats -> reste synchro avec le tick des cooldowns (re-render 1×/min).
-      const availCount = acc.services.filter(sid => !acc.cooldowns[sid] || acc.cooldowns[sid] <= Date.now()).length;
+      // Résumé « N/9 » de la carte repliée : même test que updateStats
+      // (renderer/cooldowns.js) -> toujours synchro avec le tick des cooldowns.
+      const now = Date.now();
+      const availCount = acc.services.filter(sid => CD.isAvailable(acc.cooldowns[sid], now)).length;
 
       const servicesHtml = acc.services.map(sid => {
         const svc = SERVICES.find(s => s.id === sid);
         if (!svc) return '';
-        const cdTime = acc.cooldowns[sid] || 0;
-        const isOnCooldown = cdTime > Date.now();
-        const btnClass = isOnCooldown ? `${svc.cssClass} cooldown-active` : svc.cssClass;
-        const cdBtnClass = isOnCooldown ? 'cooldown-btn active' : 'cooldown-btn';
-        const cdText = isOnCooldown ? formatCooldown(cdTime - Date.now()) : 'Épuiser (24h)';
+        const v = CD.view(acc.cooldowns[sid], now);
+        const pending = isResetPending(acc.id, sid);
+        const exhausted = v.state === 'active' || v.state === 'inconsistent';
+        const btnClass = exhausted ? `${svc.cssClass} cooldown-active` : svc.cssClass;
+        const cdBtnClass = 'cooldown-btn' + (exhausted ? ' active' : '') + (v.state === 'ended' ? ' ended' : '')
+          + (v.state === 'inconsistent' ? ' inconsistent' : '') + (pending ? ' confirming' : '');
+        const cdText = pending ? 'Confirmer ?' : v.text;
+        const cdTitle = pending ? 'Cliquer de nouveau pour annuler ce cooldown (sinon rien ne change).' : v.title;
         // svc.id vient de SERVICES (valeurs sûres codées en dur). Les actions
         // passent par des data-* lus par la délégation d'événements (chantier A) :
         // plus aucune donnée n'est injectée dans un attribut onclick.
         return `
           <div class="service-column">
             <button class="svc-btn ${btnClass}" data-action="open-service" data-acc="${id}" data-svc="${svc.id}">${escapeHtml(svc.name)}</button>
-            <button class="${cdBtnClass}" data-action="toggle-cooldown" data-acc="${id}" data-svc="${svc.id}">${cdText}</button>
+            <button class="${cdBtnClass}" data-action="toggle-cooldown" data-acc="${id}" data-svc="${svc.id}" data-cd-state="${v.state}" title="${escapeHtml(cdTitle)}">${escapeHtml(cdText)}</button>
           </div>
         `;
       }).join('');
@@ -501,10 +771,11 @@ async function initApp() {
 
   function updateStats() {
     let activeAccounts = 0, availableIAs = 0;
+    const now = Date.now();
     accounts.forEach(acc => {
       let hasAvailable = false;
       acc.services.forEach(sid => {
-        if (!acc.cooldowns[sid] || acc.cooldowns[sid] <= Date.now()) { availableIAs++; hasAvailable = true; }
+        if (CD.isAvailable(acc.cooldowns[sid], now)) { availableIAs++; hasAvailable = true; }
       });
       if (hasAvailable) activeAccounts++;
     });
@@ -516,12 +787,12 @@ async function initApp() {
     if (allBtn) allBtn.classList.toggle('all-collapsed', accounts.length > 0 && accounts.every(a => collapsedAccounts.has(a.id)));
   }
 
-  function formatCooldown(ms) {
-    const totalSec = Math.floor(ms / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    return `⏳ ${h}h ${m.toString().padStart(2, '0')}m`;
-  }
+  // Annulation d'un cooldown actif (ou incohérent) en DEUX clics : le 1er arme
+  // une confirmation sur le bouton pendant 5 s, le 2e annule. Évite qu'un clic
+  // accidentel efface l'information (audit phase 2, E5).
+  const RESET_CONFIRM_MS = 5000;
+  const pendingResets = new Map(); // "accId|svcId" -> échéance de la confirmation
+  const isResetPending = (accId, svcId) => (pendingResets.get(accId + '|' + svcId) || 0) > Date.now();
 
   // Layout
   window.setLayout = function(mode, btn) {
@@ -580,11 +851,29 @@ async function initApp() {
     }
 
     const pane = document.getElementById(`pane${activePaneId}`);
-    pane.innerHTML = ''; // détruit l'ancienne <webview> (le process invité Chromium est libéré)
+    mountService(pane, acc, svc);
+
+    if (layoutMode === 2) {
+      activePaneId = activePaneId === 1 ? 2 : 1;
+    }
+    updateClosePane2Btn();
+    showToast(`${svc.name} ouvert avec ${acc.name}`);
+  }
+
+  // === Panneau de service : webview + chargement + écran d'erreur (lot 4) ===
+  // Tout est recréé à chaque montage : pane.innerHTML='' détruit l'ancienne
+  // <webview> (le processus invité Chromium est libéré) et, avec elle, ses
+  // écouteurs. Un remontage (« Recharger le service ») recrée la webview sur
+  // la MÊME partition persist:<profil> : la session de connexion est conservée.
+  const PE = window.OVCRPaneErrors;
+  function mountService(pane, acc, svc) {
+    pane.innerHTML = '';
+    pane.dataset.acc = acc.id;
+    pane.dataset.svc = svc.id;
+    const paneNo = pane.id === 'pane2' ? 2 : 1;
 
     // Feedback de chargement : spinner + nom du service/compte le temps que la
-    // page charge (avant : panneau noir muet pendant plusieurs secondes).
-    // L'animation CSS ne vit que tant que l'overlay existe -> coût nul ensuite.
+    // page charge. L'animation CSS ne vit que tant que l'overlay est visible.
     const loading = document.createElement('div');
     loading.className = 'pane-loading';
     loading.innerHTML = `<div class="pane-spinner"></div><span>Connexion à ${escapeHtml(svc.name)} — ${escapeHtml(acc.name)}…</span>`;
@@ -596,21 +885,157 @@ async function initApp() {
     webview.setAttribute('allowpopups', '');
     webview.style.width = '100%';
     webview.style.height = '100%';
+    webview.style.flex = '1 1 0'; // laisse la place au bandeau « hors ligne » éventuel
+    webview.style.minHeight = '0';
     pane.appendChild(webview);
 
-    // Retiré au 1er rendu du service ; filet de 10 s si l'événement ne vient
-    // jamais (webview morte) pour ne jamais masquer le panneau. Si un autre
-    // service est ouvert entre-temps, innerHTML='' a déjà détaché l'overlay
-    // et le remove() différé est sans effet.
-    const clearLoading = () => loading.remove();
-    webview.addEventListener('dom-ready', clearLoading, { once: true });
-    setTimeout(clearLoading, 10000);
+    let failed = false;          // un échec est affiché pour la navigation en cours
+    let errorBox = null;
+    let lastFailure = null;      // { kind, code, description, host, at }
+    const showLoading = () => { loading.hidden = false; };
+    const hideLoading = () => { loading.hidden = true; };
+    // Filet de 10 s si aucun événement ne vient (webview morte) : on ne
+    // masque jamais le panneau indéfiniment.
+    const safety = setTimeout(hideLoading, 10000);
 
-    if (layoutMode === 2) {
-      activePaneId = activePaneId === 1 ? 2 : 1;
+    function hideError() {
+      if (errorBox) { errorBox.remove(); errorBox = null; }
     }
+
+    function showError(info, actions) {
+      hideLoading();
+      hideError();
+      lastFailure = { ...info, service: svc.id, account: acc.id, at: new Date().toLocaleTimeString() };
+      console.warn('[panneau]', info.kind, info.code !== undefined ? 'code ' + info.code : '', info.host || '', 'service', svc.id, 'compte', acc.id);
+      errorBox = document.createElement('div');
+      errorBox.className = 'pane-error';
+      errorBox.setAttribute('role', 'alert');
+      const icon = document.createElement('span');
+      icon.className = 'ic pane-error__icon';
+      icon.setAttribute('data-icon', 'triangle-exclamation');
+      const title = document.createElement('div');
+      title.className = 'pane-error__title';
+      title.textContent = info.title;
+      const detail = document.createElement('div');
+      detail.className = 'pane-error__detail';
+      detail.textContent = info.detail;
+      const meta = document.createElement('div');
+      meta.className = 'pane-error__meta';
+      meta.textContent = `${svc.name} — ${acc.name}`;
+      const bar = document.createElement('div');
+      bar.className = 'pane-error__actions';
+      const diagBox = document.createElement('pre');
+      diagBox.className = 'pane-error__diag';
+      diagBox.hidden = true;
+      const all = [...actions, ['Informations de diagnostic', () => {
+        diagBox.textContent = [
+          `Problème : ${lastFailure.kind}`,
+          lastFailure.code !== undefined ? `Code : ${lastFailure.code}${lastFailure.description ? ' (' + lastFailure.description + ')' : ''}` : null,
+          lastFailure.host ? `Site : ${lastFailure.host}` : null,
+          `Service : ${svc.id} · panneau ${paneNo}`,
+          `Connexion Internet : ${navigator.onLine ? 'oui' : 'non'}`,
+          `Heure : ${lastFailure.at}`
+        ].filter(Boolean).join('\n');
+        diagBox.hidden = !diagBox.hidden;
+      }]];
+      all.forEach(([label, fn], i) => {
+        const b = document.createElement('button');
+        b.className = i === 0 ? 'btn btn--primary' : 'btn';
+        b.textContent = label;
+        b.addEventListener('click', fn);
+        bar.appendChild(b);
+      });
+      errorBox.append(icon, title, detail, meta, bar, diagBox);
+      hydrateIcons(errorBox);
+      pane.appendChild(errorBox);
+    }
+
+    const retry = (url) => {
+      failed = false;
+      hideError();
+      showLoading();
+      webview.loadURL(url || svc.url).catch(e => console.warn('[panneau] nouvel essai :', e && e.message));
+    };
+    const remount = () => mountService(pane, acc, svc);
+    const openInBrowser = () => api.services.openInBrowser(svc.url).then(ok => {
+      if (ok) showToast(`${svc.name} ouvert dans votre navigateur (hors de l'application, sans la session de ce compte)`, 'warning');
+      else showToast('Ouverture dans le navigateur impossible', 'error');
+    }).catch(e => { console.error('[panneau] navigateur :', e && e.message); showToast('Ouverture dans le navigateur impossible', 'error'); });
+    const close = () => closePane(paneNo);
+
+    webview.addEventListener('did-start-loading', () => { if (!failed) showLoading(); });
+    webview.addEventListener('dom-ready', () => { clearTimeout(safety); hideLoading(); });
+    webview.addEventListener('did-stop-loading', hideLoading);
+
+    webview.addEventListener('did-fail-load', (e) => {
+      if (!PE || !PE.isRelevantFailure(e.errorCode, e.isMainFrame)) return;
+      failed = true;
+      const info = PE.classifyLoadError(e.errorCode, navigator.onLine);
+      const url = e.validatedURL;
+      showError({ ...info, code: e.errorCode, description: e.errorDescription, host: PE.hostOf(url) }, [
+        ['Réessayer', () => retry(url)],
+        ['Recharger le service', remount],
+        ['Ouvrir dans le navigateur', openInBrowser],
+        ['Fermer le panneau', close]
+      ]);
+    });
+
+    webview.addEventListener('render-process-gone', (e) => {
+      const d = e.details || e;
+      if (d.reason === 'clean-exit') return;
+      failed = true;
+      showError({ ...(PE ? PE.classifyCrash(d.reason) : { kind: 'crashed', title: 'Le panneau s\'est arrêté', detail: '' }), code: d.exitCode, description: d.reason }, [
+        ['Recharger le service', remount],
+        ['Ouvrir dans le navigateur', openInBrowser],
+        ['Fermer le panneau', close]
+      ]);
+    });
+
+    webview.addEventListener('unresponsive', () => {
+      showError(PE ? PE.unresponsive() : { kind: 'unresponsive', title: 'Le service ne répond plus', detail: '' }, [
+        ['Attendre', hideError],
+        ['Recharger le service', remount],
+        ['Fermer le panneau', close]
+      ]);
+    });
+    webview.addEventListener('responsive', () => {
+      if (errorBox && lastFailure && lastFailure.kind === 'unresponsive') hideError();
+    });
+
+    updateOfflineStrip(pane);
+  }
+
+  // Bandeau discret « hors ligne » en haut des panneaux ouverts : une page déjà
+  // chargée peut rester utilisable un moment, on ne la masque donc pas.
+  function updateOfflineStrip(pane) {
+    let strip = pane.querySelector('.pane-offline');
+    const show = !navigator.onLine && !!pane.querySelector('webview');
+    if (show && !strip) {
+      strip = document.createElement('div');
+      strip.className = 'pane-offline';
+      strip.textContent = 'Hors ligne : ce panneau ne peut plus joindre le service. Il se mettra à jour au retour de la connexion (ou rechargez-le).';
+      pane.prepend(strip);
+    } else if (!show && strip) {
+      strip.remove();
+    }
+  }
+  const updateAllOfflineStrips = () => ['pane1', 'pane2'].forEach(id => updateOfflineStrip(document.getElementById(id)));
+  window.addEventListener('offline', () => { console.warn('[réseau] connexion perdue'); updateAllOfflineStrips(); });
+  window.addEventListener('online', () => { console.log('[réseau] connexion rétablie'); updateAllOfflineStrips(); });
+
+  // Ferme un panneau (bouton « Fermer le panneau 2 » ou écran d'erreur).
+  function closePane(n) {
+    const pane = document.getElementById(`pane${n}`);
+    if (!pane || !pane.querySelector('webview')) return false;
+    // innerHTML='' détruit la <webview> -> Electron tue le process invité
+    // Chromium et libère sa mémoire. On restaure le placeholder d'origine.
+    pane.innerHTML = `<div class="pane-empty"><span class="ic" data-icon="robot"></span><span>Panneau ${n} vide</span></div>`;
+    delete pane.dataset.acc;
+    delete pane.dataset.svc;
+    hydrateIcons(pane);
+    // (openService re-ciblera de lui-même un panneau vide en vue scindée.)
     updateClosePane2Btn();
-    showToast(`${svc.name} ouvert avec ${acc.name}`);
+    return true;
   }
 
   // Bouton « Fermer le panneau 2 » : affiché seulement si une webview vit dans
@@ -622,25 +1047,23 @@ async function initApp() {
   }
 
   window.closePane2 = function() {
-    const pane2 = document.getElementById('pane2');
-    if (!pane2.querySelector('webview')) return; // rien d'ouvert : rien à faire
-    // innerHTML='' détruit la <webview> -> Electron tue le process invité
-    // Chromium et libère sa mémoire (même mécanique que le remplacement
-    // effectué par openService). On restaure le placeholder d'origine.
-    pane2.innerHTML = '<div class="pane-empty"><span class="ic" data-icon="robot"></span><span>Panneau 2 vide</span></div>';
-    hydrateIcons(pane2);
-    // (openService re-ciblera de lui-même ce panneau vide en vue scindée.)
-    updateClosePane2Btn();
-    showToast('Panneau 2 fermé (mémoire libérée)');
+    if (closePane(2)) showToast('Panneau 2 fermé (mémoire libérée)');
   }
 
   // Fichiers
   window.selectLocalFolder = async function() {
     // Le dossier choisi dans la boîte de dialogue devient, côté processus
     // principal, une racine autorisée : seuls ses fichiers seront accessibles.
-    const folderPath = await api.files.selectFolder();
-    if (!folderPath) return;
-    const res = await api.files.listDirectory(folderPath);
+    let folderPath, res;
+    try {
+      folderPath = await api.files.selectFolder();
+      if (!folderPath) return;
+      res = await api.files.listDirectory(folderPath);
+    } catch (e) {
+      console.error('[files] ouverture du dossier impossible :', e && e.message);
+      showToast('Impossible d\'ouvrir ce dossier.', 'error');
+      return;
+    }
     if (!res || !res.ok) showToast((res && FILE_ERRORS[res.error]) || 'Dossier illisible.', 'error');
     const files = (res && res.entries) || [];
     const list = document.getElementById('fileList');
@@ -729,14 +1152,18 @@ async function initApp() {
   window.openModal = function(accId = null) {
     const modal = document.getElementById('accountModal');
     const title = document.getElementById('modalTitle');
-    if (accId) {
-      const acc = accounts.find(a => a.id === accId);
+    const profileInput = document.getElementById('inputProfile');
+    const acc = accId ? accounts.find(a => a.id === accId) : null;
+    if (accId && !acc) return; // garde : id obsolète
+    if (acc) {
       title.textContent = "Modifier le compte";
       document.getElementById('editId').value = acc.id;
       document.getElementById('inputName').value = acc.name;
       document.getElementById('inputEmail').value = acc.email;
-      document.getElementById('inputProfile').value = acc.profile;
+      profileInput.value = acc.profile;
+      profileInput.dataset.original = acc.profile;
     } else {
+      delete profileInput.dataset.original;
       title.textContent = "Ajouter un compte";
       document.getElementById('editId').value = '';
       document.getElementById('inputName').value = '';
@@ -748,8 +1175,19 @@ async function initApp() {
       while (used.has('profil_' + n)) n++;
       document.getElementById('inputProfile').value = 'profil_' + n;
     }
+    updateProfileWarning();
     modal.classList.add('open');
   }
+
+  // Modifier le profil d'un compte EXISTANT change sa partition de cookies
+  // (persist:<profil>) : sans avertissement, les sessions semblaient perdues
+  // (audit phase 2, M8). Simple information, rien n'est bloqué.
+  function updateProfileWarning() {
+    const input = document.getElementById('inputProfile');
+    const original = input.dataset.original;
+    document.getElementById('profileWarning').hidden = original === undefined || input.value.trim() === original;
+  }
+  document.getElementById('inputProfile').addEventListener('input', updateProfileWarning);
   window.closeModal = function() { document.getElementById('accountModal').classList.remove('open'); }
 
   // Modale d'aide « Comprendre les IA disponibles ». Liste régénérée à chaque
@@ -758,6 +1196,8 @@ async function initApp() {
   // Purement informatif : ne touche ni comptes, ni cooldowns, ni webviews.
   window.openHelpModal = function() {
     const list = document.getElementById('helpList');
+    list.hidden = false;                                  // toujours rouverte sur l'aide,
+    document.getElementById('diagPanel').hidden = true;   // pas sur le diagnostic
     // Contenu 100% statique (SERVICES + SERVICE_INFO codés en dur) -> sûr,
     // mais on garde escapeHtml par cohérence avec le reste du rendu.
     list.innerHTML = SERVICES.map(svc => {
@@ -777,8 +1217,57 @@ async function initApp() {
   // Oublie les autorisations mémorisées (position, micro, caméra,
   // notifications…) : chaque site redemandera à sa prochaine demande.
   window.resetSitePermissions = async function() {
-    const ok = await api.sitePermissions.reset().catch(() => false);
+    const ok = await api.sitePermissions.reset().catch(e => { console.error('[permissions] réinitialisation impossible :', e && e.message); return false; });
     showToast(ok ? 'Autorisations des sites réinitialisées' : 'Réinitialisation impossible', ok ? 'success' : 'error');
+  }
+
+  // --- Diagnostic (lot 3) : texte lisible, déjà expurgé par le main.
+  let lastDiagnosticText = '';
+  function formatDiagnostic(d) {
+    const lines = [];
+    lines.push(`[OVCR] AI Manager ${d.app.version}${d.app.packaged ? '' : ' (développement)'}`);
+    lines.push(`Electron ${d.versions.electron} · Chromium ${d.versions.chrome} · ${d.os.platform} ${d.os.release} ${d.os.arch}`);
+    lines.push(`Ouverte depuis ${d.uptimeMin} min · schéma des comptes : ${d.accountsSchema}`);
+    const s = d.storage;
+    lines.push(s
+      ? `Stockage : ${s.status}${s.accounts !== undefined ? ', ' + s.accounts + ' compte(s)' : ''}${s.encrypted === false ? ', NON chiffré' : s.encrypted ? ', chiffré' : ''}${s.migrated ? ', migré ' + s.migrated : ''}${s.backupAvailable !== undefined ? ', sauvegarde ' + (s.backupAvailable ? 'disponible' : 'absente') : ''}`
+      : 'Stockage : état inconnu');
+    lines.push(`Écriture des comptes : ${storageWritable ? 'possible' : 'bloquée (' + (bannerKind || 'inconnu') + ')'}`);
+    lines.push(`Mémoire totale : ${d.memory.totalMb} Mo`);
+    for (const [type, m] of Object.entries(d.memory.byType)) lines.push(`  ${type} : ${m.count} processus, ${m.mb} Mo`);
+    lines.push(`Panneaux : ${document.querySelectorAll('#webviewArea webview').length} ouvert(s), vue ${layoutMode === 2 ? 'scindée' : 'simple'}`);
+    lines.push('', 'Derniers événements :');
+    for (const e of d.recent) lines.push(`${e.t.slice(11, 19)} ${e.level.toUpperCase()} [${e.source}] ${e.message}`);
+    return lines.join('\n');
+  }
+  window.showDiagnostic = async function() {
+    const panel = document.getElementById('diagPanel');
+    const text = document.getElementById('diagText');
+    const list = document.getElementById('helpList');
+    if (!panel.hidden) { panel.hidden = true; list.hidden = false; return; } // 2e clic : retour à l'aide
+    text.textContent = 'Chargement…';
+    panel.hidden = false;
+    list.hidden = true;
+    try {
+      lastDiagnosticText = formatDiagnostic(await api.diag.get());
+    } catch (e) {
+      console.error('[diag] lecture impossible :', e && e.message);
+      lastDiagnosticText = 'Diagnostic indisponible : ' + (e && e.message);
+    }
+    text.textContent = lastDiagnosticText; // textContent : aucun HTML interprété
+  }
+  window.copyDiagnostic = async function() {
+    try {
+      await navigator.clipboard.writeText(lastDiagnosticText);
+      showToast('Diagnostic copié dans le presse-papiers');
+    } catch (e) {
+      console.warn('[diag] copie impossible :', e && e.message);
+      showToast('Copie impossible : sélectionnez le texte et faites Ctrl+C.', 'warning');
+    }
+  }
+  window.openLogsFolder = async function() {
+    const ok = await api.diag.openLogs().catch(e => { console.error('[diag] dossier des journaux :', e && e.message); return false; });
+    if (!ok) showToast('Impossible d\'ouvrir le dossier des journaux', 'error');
   }
   window.closeHelpModal = function() { document.getElementById('helpModal').classList.remove('open'); }
   // Fermeture par clic en dehors de la boîte (sur le fond assombri).
@@ -797,6 +1286,7 @@ async function initApp() {
   }
   window.closeDeleteModal = function() { document.getElementById('deleteModal').classList.remove('open'); }
   window.confirmDelete = function() {
+    if (!ensureWritable()) return;
     const id = document.getElementById('deleteId').value;
     accounts = accounts.filter(a => a.id !== id);
     if (activeAccountId === id) activeAccountId = null;
@@ -808,6 +1298,7 @@ async function initApp() {
   }
 
   window.saveAccount = function() {
+    if (!ensureWritable()) return;
     const id = document.getElementById('editId').value;
     const name = document.getElementById('inputName').value.trim();
     const email = document.getElementById('inputEmail').value.trim();
@@ -843,8 +1334,25 @@ async function initApp() {
   window.toggleCooldown = function(accId, svcId) {
     const acc = accounts.find(a => a.id === accId);
     if (!acc) return; // garde : id obsolète (chantier audit 3.7)
-    const currentCd = acc.cooldowns[svcId] || 0;
-    acc.cooldowns[svcId] = currentCd > Date.now() ? 0 : Date.now() + 86400000;
+    if (!ensureWritable()) return;
+    const now = Date.now();
+    const key = accId + '|' + svcId;
+    const v = CD.view(acc.cooldowns[svcId], now);
+    if (v.confirmToChange) {
+      // Cooldown actif ou incohérent : 1er clic = demande de confirmation.
+      if (!isResetPending(accId, svcId)) {
+        pendingResets.set(key, now + RESET_CONFIRM_MS);
+        renderAccounts();
+        setTimeout(() => { if (!isResetPending(accId, svcId) && pendingResets.delete(key)) renderAccounts(); }, RESET_CONFIRM_MS + 50);
+        return;
+      }
+      pendingResets.delete(key);
+      acc.cooldowns[svcId] = 0; // annulé : de nouveau « non suivi »
+      console.log('[cooldowns] annulé', v.state === 'inconsistent' ? '(échéance incohérente)' : '', 'compte', accId, 'service', svcId);
+    } else {
+      // Non suivi ou terminé : marqué épuisé, rappel dans 24 h.
+      acc.cooldowns[svcId] = CD.newEnd(now);
+    }
     saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
     renderAccounts();
   }
@@ -877,12 +1385,10 @@ async function initApp() {
     // Restaure les largeurs mémorisées (via flex-basis = taille exacte).
     // Lecture défensive (chantier C) : une valeur absente/illisible ne doit
     // jamais empêcher l'app de démarrer — on retombe simplement sur le défaut.
-    try {
-      const savedIde = localStorage.getItem('ide_w');
-      if (savedIde) idePanel.style.flex = '0 0 ' + savedIde;
-      const savedExp = localStorage.getItem('explorer_w');
-      if (savedExp) fileExplorer.style.flex = '0 0 ' + savedExp;
-    } catch (e) { console.warn('[storage] largeurs de colonnes ignorées :', e); }
+    const savedIde = prefs.width('ide_w');
+    if (savedIde) idePanel.style.flex = '0 0 ' + savedIde;
+    const savedExp = prefs.width('explorer_w');
+    if (savedExp) fileExplorer.style.flex = '0 0 ' + savedExp;
 
     function makeResizer(resizer, opts) {
       if (!resizer) return;
@@ -920,7 +1426,7 @@ async function initApp() {
       min: 260,
       max: () => document.querySelector('.workspace-body').getBoundingClientRect().width - 320,
       apply: (w) => { idePanel.style.flex = '0 0 ' + w + 'px'; },
-      onEnd: () => { try { localStorage.setItem('ide_w', Math.round(idePanel.getBoundingClientRect().width) + 'px'); } catch (e) {} }
+      onEnd: () => prefs.set('ide_w', Math.round(idePanel.getBoundingClientRect().width) + 'px')
     });
 
     // Explorateur de fichiers ↔ éditeur
@@ -930,7 +1436,7 @@ async function initApp() {
       min: 120,
       max: () => idePanel.getBoundingClientRect().width - 160,
       apply: (w) => { fileExplorer.style.flex = '0 0 ' + w + 'px'; },
-      onEnd: () => { try { localStorage.setItem('explorer_w', Math.round(fileExplorer.getBoundingClientRect().width) + 'px'); } catch (e) {} }
+      onEnd: () => prefs.set('explorer_w', Math.round(fileExplorer.getBoundingClientRect().width) + 'px')
     });
 
     // Panneau IA 1 ↔ panneau IA 2 (vue scindée)
@@ -994,7 +1500,10 @@ async function initApp() {
     'save-account':     () => saveAccount(),
     'close-delete':     () => closeDeleteModal(),
     'confirm-delete':   () => confirmDelete(),
-    'reset-permissions': () => resetSitePermissions()
+    'reset-permissions': () => resetSitePermissions(),
+    'show-diagnostic':  () => showDiagnostic(),
+    'copy-diagnostic':  () => copyDiagnostic(),
+    'open-logs':        () => openLogsFolder()
   };
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-cmd]');
@@ -1011,38 +1520,52 @@ async function initApp() {
   function refreshCooldownLabels() {
     const now = Date.now();
     document.querySelectorAll('#accountsList [data-action="toggle-cooldown"]').forEach(btn => {
-      const acc = accounts.find(a => a.id === btn.getAttribute('data-acc'));
-      if (!acc) return;
-      const cd = acc.cooldowns[btn.getAttribute('data-svc')] || 0;
-      if (cd > now) btn.textContent = formatCooldown(cd - now);
+      const accId = btn.getAttribute('data-acc'), svcId = btn.getAttribute('data-svc');
+      const acc = accounts.find(a => a.id === accId);
+      if (!acc || isResetPending(accId, svcId)) return;
+      const v = CD.view(acc.cooldowns[svcId], now);
+      if (v.state !== btn.getAttribute('data-cd-state')) return; // changement d'état : rendu complet au tick
+      btn.textContent = v.text;
+      btn.title = v.title;
     });
   }
 
-  // Tick cooldowns (1 s) : remet à 0 les cooldowns expirés (seul cas de
-  // re-render complet : il faut réactiver le bouton de service) et, au
-  // changement de minute (le format du décompte est à la minute), met à jour
-  // les libellés via refreshCooldownLabels() — même ponctualité qu'avant
-  // (lag ≤ 1 s), mais sans reconstruire tout le DOM de la liste.
-  // Coût d'un tick sans cooldown actif : boucle comptes x services pure (µs).
-  let lastCdMinute = -1;
+  // Tick cooldowns (1 s). Les échéances ne sont plus remises à 0 à
+  // l'expiration : un cooldown fini reste « terminé à HH:MM » pendant 24 h
+  // (information utile), puis redevient « non suivi » — sans écriture disque.
+  //   - un ÉTAT change (actif -> terminé = réactivation automatique, terminé ->
+  //     non suivi) : rendu complet (réactive le bouton de service), lag ≤ 1 s ;
+  //   - sinon, au changement de minute : libellés seuls (textContent), bien
+  //     moins cher qu'un rendu complet.
+  // Coût d'un tick sans changement : calcul de la signature des états (µs).
+  let lastCdMinute = Math.floor(Date.now() / 60000);
+  let lastCdSignature = CD.signature(accounts, Date.now());
   setInterval(() => {
     const now = Date.now();
-    let needsRender = false, anyActive = false;
-    accounts.forEach(acc => {
-      SERVICES.forEach(svc => {
-        const cd = acc.cooldowns[svc.id];
-        if (!cd) return;
-        if (cd <= now) { acc.cooldowns[svc.id] = 0; needsRender = true; }
-        else anyActive = true;
-      });
-    });
+    const sig = CD.signature(accounts, now);
     const minute = Math.floor(now / 60000);
-    if (needsRender) renderAccounts();
-    else if (anyActive && minute !== lastCdMinute) refreshCooldownLabels();
+    if (sig !== lastCdSignature) renderAccounts();
+    else if (minute !== lastCdMinute) refreshCooldownLabels();
+    lastCdSignature = sig;
     lastCdMinute = minute;
   }, 1000);
 
   renderAccounts();
+
+  // Vérification au démarrage : échéances incohérentes (horloge changée ou
+  // donnée invalide) signalées dans le journal ; l'utilisateur les voit sur
+  // les boutons (« ⚠ Échéance incohérente ») et peut les réinitialiser.
+  (() => {
+    const now = Date.now();
+    let inconsistent = 0, active = 0;
+    accounts.forEach(acc => Object.values(acc.cooldowns || {}).forEach(end => {
+      const s = CD.state(end, now);
+      if (s === 'inconsistent') inconsistent++;
+      else if (s === 'active') active++;
+    }));
+    if (inconsistent) console.warn(`[cooldowns] ${inconsistent} échéance(s) incohérente(s) au démarrage (horloge de l'ordinateur modifiée ?)`);
+    else if (active) console.log(`[cooldowns] ${active} cooldown(s) actif(s) au démarrage`);
+  })();
 
   // Récupération des données (chantier C) : si ai_accounts était illisible au
   // démarrage, on propose de restaurer la sauvegarde plutôt que de perdre en
@@ -1058,9 +1581,10 @@ async function initApp() {
     const hasBackup = !!backup.available;
     // « undecryptable » : fichier chiffré par un autre compte Windows, ou clé
     // DPAPI perdue (mot de passe Windows réinitialisé par un administrateur…).
-    const why = loadResult && loadResult.status === 'undecryptable'
+    const status = loadResult && loadResult.status;
+    const why = status === 'undecryptable'
       ? 'ne peut pas être déchiffrée sur ce compte Windows'
-      : 'est corrompue';
+      : status === 'missing' ? 'est introuvable' : 'est corrompue';
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay open';
@@ -1069,13 +1593,14 @@ async function initApp() {
 
     const title = document.createElement('div');
     title.className = 'modal__title';
-    title.textContent = 'Données de comptes illisibles';
+    title.textContent = status === 'missing' ? 'Liste de comptes introuvable' : 'Données de comptes illisibles';
 
     const desc = document.createElement('div');
     desc.style.cssText = 'color:var(--fg-muted); font-size:13px; margin:8px 0 4px;';
     // textContent (pas innerHTML) : aucune donnée n'est interprétée en HTML.
     desc.textContent = hasBackup
-      ? `La liste de comptes enregistrée ${why}. Une sauvegarde de ${backup.count} compte(s) a été trouvée. La restaurer ?`
+      ? `La liste de comptes enregistrée ${why}. Une sauvegarde de ${backup.count} compte(s) a été trouvée. La restaurer ? `
+        + 'Si vous continuez sans restaurer, une copie de cette sauvegarde est conservée dans le dossier « backups » des données de l\'application (rien n\'est supprimé).'
       : `La liste de comptes enregistrée ${why} et aucune sauvegarde lisible n'est disponible. L'application démarre avec une liste vide ; le fichier actuel sera mis de côté (jamais supprimé) si vous créez ou modifiez un compte. Vos sessions de connexion ne sont pas touchées : recréer un compte avec le même nom de profil les retrouve.`;
 
     const actions = document.createElement('div');
@@ -1085,7 +1610,7 @@ async function initApp() {
     if (hasBackup) {
       const cancel = document.createElement('button');
       cancel.className = 'btn';
-      cancel.textContent = 'Ignorer';
+      cancel.textContent = 'Continuer sans restaurer';
       cancel.addEventListener('click', close);
 
       const restore = document.createElement('button');
@@ -1101,7 +1626,9 @@ async function initApp() {
           showToast('Restauration impossible' + (r && r.error ? ' (' + r.error + ')' : ''), 'error');
           return;
         }
-        accounts = r.accounts;
+        // Même interprétation qu'au démarrage (sauvegarde migrée, ou plus
+        // récente -> lecture seule).
+        applyLoadResult(r.result || { status: 'ok', accounts: r.accounts });
         migrateOldAccounts();   // complète/répare les comptes restaurés
         renderAccounts();
         close();

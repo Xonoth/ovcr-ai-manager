@@ -24,9 +24,28 @@
 const { app, safeStorage } = require('electron');
 const path = require('path');
 const fsp = require('fs').promises;
+const { writeAtomicText, copyAtomic, renameWithRetry, fileStamp } = require('./atomic-file');
 
 const FORMAT = 'ovcr-accounts';
+// Version du CONTENEUR (forme de l'enveloppe : format/encryption/payload).
 const VERSION = 1;
+
+// ===== Versionnement du schéma des comptes (phase 2, lot 2) =====
+// `schema` (dans l'enveloppe) = forme des comptes dans la charge utile. Absent
+// = 1 (fichiers écrits jusqu'en 1.1.0). La charge utile reste un TABLEAU de
+// comptes à tous les schémas : une version antérieure (1.1.0) qui relit un
+// fichier plus récent retrouve donc tous les comptes (elle ignore seulement
+// les champs qu'elle ne connaît pas) — un retour arrière ne perd aucun compte.
+//
+// MIGRATIONS[n] : fonction PURE qui reçoit la liste au schéma n (déjà JSON.parse,
+// non validée) et renvoie la liste au schéma n+1. Elle doit être IDEMPOTENTE
+// et tolérante (une entrée inattendue est laissée telle quelle : la validation
+// qui suit tranchera). Avant chaque migration, le fichier d'origine est copié
+// tel quel (toujours chiffré) dans backups/pre-schema-v<n>-v<m>-<date>.json.
+const SCHEMA = 1;
+const MIGRATIONS = {};
+let currentSchema = SCHEMA;       // modifiables uniquement par les tests
+let migrations = MIGRATIONS;
 const MAIN_FILE = 'accounts.json';
 const BAK_FILE = 'accounts.json.bak';
 const BACKUP_DIR = 'backups';
@@ -40,7 +59,7 @@ const SERVICE_ID = /^[a-z0-9_-]{1,40}$/;
 const COLOR = /^#[0-9a-fA-F]{3,8}$/;
 
 const file = name => path.join(app.getPath('userData'), name);
-const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+const stamp = fileStamp;
 
 // Les opérations disque s'enchaînent une par une, dans l'ordre d'arrivée
 // (jamais deux écritures en parallèle sur les mêmes fichiers).
@@ -61,13 +80,22 @@ function canEncrypt() {
   try { return safeStorage.isEncryptionAvailable(); } catch (_) { return false; }
 }
 
-function encode(raw) {
+// schema : version de schéma de la charge utile (omis pour les fichiers qui ne
+// contiennent pas une liste de comptes, ex. la sauvegarde pré-migration 1.0.4).
+function encode(raw, schema) {
   const base = { format: FORMAT, version: VERSION, savedAt: new Date().toISOString() };
+  if (schema !== undefined) base.schema = schema;
   if (canEncrypt()) {
     return { ...base, encryption: 'safeStorage', payload: safeStorage.encryptString(raw).toString('base64') };
   }
   console.warn('[accounts] chiffrement safeStorage indisponible : écriture en clair');
   return { ...base, encryption: 'none', payload: raw };
+}
+
+// Schéma déclaré par une enveloppe : absent = 1 ; présent mais invalide = null.
+function schemaOf(env) {
+  if (env.schema === undefined) return 1;
+  return Number.isInteger(env.schema) && env.schema >= 1 && env.schema < 1e6 ? env.schema : null;
 }
 
 async function decodeFile(filePath) {
@@ -80,10 +108,16 @@ async function decodeFile(filePath) {
   let env;
   try { env = JSON.parse(text); } catch (_) { return { status: 'corrupt' }; }
   if (!env || env.format !== FORMAT || typeof env.payload !== 'string') return { status: 'corrupt' };
-  if (env.encryption === 'none') return { status: 'ok', raw: env.payload, encryption: 'none' };
+  const schema = schemaOf(env);
+  if (schema === null) return { status: 'corrupt' };
+  // Conteneur ou schéma plus récents que cette version de l'app : lisible,
+  // mais à ne JAMAIS réécrire (on perdrait ce qu'on ne comprend pas).
+  const newer = (Number.isInteger(env.version) && env.version > VERSION) || schema > currentSchema;
+  const meta = { schema, newer };
+  if (env.encryption === 'none') return { status: 'ok', raw: env.payload, encryption: 'none', ...meta };
   if (env.encryption === 'safeStorage') {
     try {
-      return { status: 'ok', raw: safeStorage.decryptString(Buffer.from(env.payload, 'base64')), encryption: 'safeStorage' };
+      return { status: 'ok', raw: safeStorage.decryptString(Buffer.from(env.payload, 'base64')), encryption: 'safeStorage', ...meta };
     } catch (_) {
       return { status: 'undecryptable' };
     }
@@ -91,26 +125,37 @@ async function decodeFile(filePath) {
   return { status: 'corrupt' };
 }
 
-// Écriture atomique : fichier temporaire synchronisé sur disque puis renommé.
-// Une coupure en plein milieu laisse l'ancienne version intacte.
-async function writeAtomic(filePath, obj) {
-  const tmp = filePath + '.tmp';
-  const fh = await fsp.open(tmp, 'w', 0o600);
-  try {
-    await fh.writeFile(JSON.stringify(obj), 'utf8');
-    await fh.sync();
-  } finally {
-    await fh.close();
-  }
-  await fsp.rename(tmp, filePath);
-}
+// Écriture atomique (voir atomic-file.js) : fichier temporaire synchronisé sur
+// disque puis renommé. Une coupure en plein milieu laisse l'ancienne version intacte.
+const writeAtomic = (filePath, obj) => writeAtomicText(filePath, JSON.stringify(obj));
+
+const asideName = (filePath, label) => `${filePath.replace(/\.json(\.bak)?$/, '')}.${label}-${stamp()}.json`;
 
 async function moveAside(filePath, label) {
   try {
-    await fsp.rename(filePath, `${filePath.replace(/\.json(\.bak)?$/, '')}.${label}-${stamp()}.json`);
+    await renameWithRetry(filePath, asideName(filePath, label));
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
   }
+}
+
+// Met à l'abri une COPIE de la sauvegarde (.bak) dans backups/ avant qu'une
+// rotation ne puisse l'écraser. Utilisé quand le fichier principal est
+// illisible ou absent : la sauvegarde est alors peut-être la seule copie
+// valide des comptes, et l'utilisateur a pu choisir de ne pas la restaurer
+// tout de suite (« Continuer sans restaurer »). Sans cela, deux
+// enregistrements suffisaient à la détruire (audit phase 2, C1).
+async function preserveBackup(reason) {
+  try {
+    await fsp.access(file(BAK_FILE));
+  } catch (_) {
+    return null; // pas de sauvegarde : rien à protéger
+  }
+  await fsp.mkdir(file(BACKUP_DIR), { recursive: true });
+  const dest = path.join(file(BACKUP_DIR), `bak-preserved-${reason}-${stamp()}.json`);
+  await copyAtomic(file(BAK_FILE), dest);
+  console.warn('[accounts] sauvegarde mise à l\'abri :', path.basename(dest));
+  return dest;
 }
 
 // ------------------------------------------------------------ Validation --
@@ -128,7 +173,9 @@ function sanitizeAccount(a, index, strict) {
   let id = typeof a.id === 'string' ? a.id : '';
   if (!id || id.length > 100 || CONTROL_CHARS.test(id)) {
     if (strict) return { error: 'identifiant invalide' };
-    id = `acc_restored_${Date.now()}_${index}`;
+    // Déterministe (même fichier -> même id à chaque lecture) : la validation
+    // d'une migration compare les ids avant/après.
+    id = `acc_restored_${index}`;
   }
 
   const profile = typeof a.profile === 'string' ? a.profile : (a.profile == null ? '' : String(a.profile));
@@ -167,12 +214,16 @@ function sanitizeList(list, strict) {
   return { accounts: out };
 }
 
-// JSON brut -> comptes (lecture tolérante). null si JSON illisible. Un JSON
-// valide mais qui n'est pas un tableau donne une liste vide (comme en 1.0.4).
+// JSON brut -> comptes (lecture tolérante entrée par entrée). null si la
+// charge utile est illisible : JSON invalide, OU JSON valide qui n'est pas
+// un tableau. (Jusqu'en 1.1.0, ce second cas donnait « 0 compte, tout va
+// bien » : la sauvegarde suivante pouvait alors écraser la bonne génération
+// dans .bak — audit phase 2, M1. C'est désormais traité comme une corruption,
+// avec proposition de restaurer la sauvegarde.)
 function parseRaw(raw) {
   let data;
   try { data = JSON.parse(raw); } catch (_) { return null; }
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data)) return null;
   return sanitizeList(data, false).accounts || [];
 }
 
@@ -184,23 +235,101 @@ async function backupInfo() {
 
 // --------------------------------------------------------------- API --
 
-function load() {
-  return serial(async () => {
-    const cur = await decodeFile(file(MAIN_FILE));
-    if (cur.status === 'missing') return { status: 'empty', accounts: [] };
-    if (cur.status === 'ok') {
-      const accounts = parseRaw(cur.raw);
-      if (accounts === null) return { status: 'corrupt', backup: await backupInfo() };
-      // Écrit en clair faute de chiffrement lors d'un lancement précédent :
-      // on rechiffre dès que c'est possible.
-      if (cur.encryption === 'none' && canEncrypt()) {
-        await writeAtomic(file(MAIN_FILE), encode(cur.raw)).catch(() => {});
-      }
-      return { status: 'ok', accounts, encrypted: canEncrypt() };
+// Fait passer une liste (déjà JSON.parse) du schéma `from` au schéma courant.
+// Lève une erreur si une étape manque ou échoue. Pure : n'écrit rien.
+function runMigrations(list, from) {
+  let data = list;
+  for (let v = from; v < currentSchema; v++) {
+    const step = migrations[v];
+    if (typeof step !== 'function') throw new Error(`migration ${v} -> ${v + 1} absente`);
+    data = step(data);
+    if (!Array.isArray(data)) throw new Error(`migration ${v} -> ${v + 1} : résultat invalide`);
+  }
+  return data;
+}
+
+// Validation APRÈS migration : aucun compte perdu ni renommé. (On ne refait
+// pas la validation stricte de l'enregistrement : un compte ancien au profil
+// vide, accepté par la 1.0.4, doit rester lisible et non bloquer la mise à
+// jour — il sera corrigé par l'utilisateur.)
+function checkMigrated(before, after) {
+  if (after.length !== before.length) return 'nombre de comptes modifié';
+  for (let i = 0; i < before.length; i++) {
+    if (before[i].id !== after[i].id || before[i].profile !== after[i].profile) return 'identifiant ou profil modifié';
+  }
+  return null;
+}
+
+// Migration du fichier principal vers le schéma courant. Étapes, sûres à
+// toute interruption (l'ancien fichier reste en place jusqu'au renommage
+// atomique final ; relancer l'app refait simplement la migration) :
+//   1. copie du fichier d'origine (chiffré, intact) dans backups/ ;
+//   2. migration en mémoire + validation ;
+//   3. écriture atomique au nouveau schéma, puis relecture et comparaison ;
+//      si la relecture diffère, l'original est remis en place depuis la copie.
+async function migrateMainFile(cur) {
+  const from = cur.schema, to = currentSchema;
+  const before = parseRaw(cur.raw);
+  let backupPath;
+  try {
+    await fsp.mkdir(file(BACKUP_DIR), { recursive: true });
+    backupPath = path.join(file(BACKUP_DIR), `pre-schema-v${from}-v${to}-${stamp()}.json`);
+    await copyAtomic(file(MAIN_FILE), backupPath);
+
+    const migrated = sanitizeList(runMigrations(JSON.parse(cur.raw), from), false).accounts || [];
+    const problem = checkMigrated(before, migrated);
+    if (problem) throw new Error('validation : ' + problem);
+
+    const raw = JSON.stringify(migrated);
+    await writeAtomic(file(MAIN_FILE), encode(raw, to));
+    const back = await decodeFile(file(MAIN_FILE));
+    if (back.status !== 'ok' || back.raw !== raw || back.schema !== to) {
+      await copyAtomic(backupPath, file(MAIN_FILE));
+      throw new Error('relecture différente après écriture');
     }
-    // corrompu, ou chiffré par un autre compte Windows / clé DPAPI perdue
-    return { status: cur.status === 'undecryptable' ? 'undecryptable' : 'corrupt', backup: await backupInfo() };
-  });
+    console.log(`[accounts] données migrées du schéma ${from} au schéma ${to} (sauvegarde : ${path.basename(backupPath)})`);
+    return { status: 'ok', accounts: migrated, encrypted: canEncrypt(), migrated: { from, to, backupFile: path.basename(backupPath) } };
+  } catch (err) {
+    console.error(`[accounts] migration du schéma ${from} au schéma ${to} impossible :`, err.code || err.message);
+    // Données d'origine intactes : affichées, mais l'app ne les réécrit pas.
+    return { status: 'migration_failed', accounts: before, from, to, error: err.code || err.message };
+  }
+}
+
+// Lecture du fichier principal (à appeler DANS serial()).
+async function loadInner() {
+  const cur = await decodeFile(file(MAIN_FILE));
+  if (cur.status === 'missing') {
+    // Fichier principal absent MAIS sauvegarde lisible (restauration
+    // interrompue, fichier supprimé à la main…) : ce n'est pas un premier
+    // lancement, on propose la sauvegarde au lieu d'annoncer une liste vide
+    // (audit phase 2, E1).
+    const backup = await backupInfo();
+    if (backup.available) return { status: 'missing', backup };
+    return { status: 'empty', accounts: [] };
+  }
+  if (cur.status === 'ok') {
+    const accounts = parseRaw(cur.raw);
+    if (accounts === null) return { status: 'corrupt', backup: await backupInfo() };
+    // Écrit par une version plus récente de l'app : affiché en LECTURE SEULE
+    // (le réécrire supprimerait les champs que cette version ne connaît pas).
+    if (cur.newer) return { status: 'newer', accounts, schema: cur.schema, supported: currentSchema };
+    if (cur.schema < currentSchema) return migrateMainFile(cur);
+    // Écrit en clair faute de chiffrement lors d'un lancement précédent :
+    // on rechiffre dès que c'est possible. Un échec n'empêche pas de
+    // travailler (le fichier en clair reste valide) : on le signale.
+    if (cur.encryption === 'none' && canEncrypt()) {
+      await writeAtomic(file(MAIN_FILE), encode(cur.raw, cur.schema))
+        .catch(err => console.warn('[accounts] rechiffrement reporté :', err.code || err.message));
+    }
+    return { status: 'ok', accounts, encrypted: canEncrypt() };
+  }
+  // corrompu, ou chiffré par un autre compte Windows / clé DPAPI perdue
+  return { status: cur.status === 'undecryptable' ? 'undecryptable' : 'corrupt', backup: await backupInfo() };
+}
+
+function load() {
+  return serial(loadInner);
 }
 
 function save(list) {
@@ -211,15 +340,24 @@ function save(list) {
   return serial(async () => {
     const mainPath = file(MAIN_FILE);
     const cur = await decodeFile(mainPath);
+    // Défense en profondeur (le renderer bloque déjà ces cas) : jamais
+    // d'écrasement d'un fichier d'une version plus récente, ni d'un fichier
+    // dont la migration n'a pas abouti (il serait « migré » sans sauvegarde).
+    if (cur.status === 'ok' && cur.newer) return { ok: false, error: 'newer_schema' };
+    if (cur.status === 'ok' && cur.schema !== currentSchema && parseRaw(cur.raw) !== null) return { ok: false, error: 'migration_pending' };
     if (cur.status === 'ok' && parseRaw(cur.raw) !== null) {
-      // Génération précédente valide -> devient la sauvegarde.
-      await fsp.copyFile(mainPath, file(BAK_FILE));
-    } else if (cur.status !== 'missing') {
-      // Fichier actuel illisible : mis de côté (jamais détruit), et la
-      // sauvegarde existante, elle, est préservée.
-      await moveAside(mainPath, 'unreadable');
+      // Génération précédente valide -> devient la sauvegarde (copie
+      // atomique : .bak n'est jamais à moitié écrit).
+      await copyAtomic(mainPath, file(BAK_FILE));
+    } else {
+      // Fichier actuel absent ou illisible : la sauvegarde est peut-être la
+      // seule copie valide -> copie mise à l'abri dans backups/ AVANT que les
+      // prochaines rotations ne l'écrasent.
+      await preserveBackup(cur.status === 'missing' ? 'main-missing' : 'main-unreadable');
+      // Fichier illisible : mis de côté (jamais détruit).
+      if (cur.status !== 'missing') await moveAside(mainPath, 'unreadable');
     }
-    await writeAtomic(mainPath, encode(raw));
+    await writeAtomic(mainPath, encode(raw, currentSchema));
     return { ok: true, encrypted: canEncrypt() };
   }).catch(err => {
     console.error('[accounts] échec d\'enregistrement :', err.code || err.message);
@@ -232,10 +370,24 @@ function restoreBackup() {
     const b = await decodeFile(file(BAK_FILE));
     const accounts = b.status === 'ok' ? parseRaw(b.raw) : null;
     if (!accounts) return { ok: false, error: 'aucune sauvegarde lisible' };
-    await moveAside(file(MAIN_FILE), 'unreadable');
-    await fsp.copyFile(file(BAK_FILE), file(MAIN_FILE));
-    return { ok: true, accounts };
-  }).catch(err => ({ ok: false, error: err.code || err.message }));
+    // Ordre sûr à toute interruption : l'ancien fichier est d'abord COPIÉ de
+    // côté (pas déplacé), puis remplacé atomiquement par la sauvegarde. Il
+    // n'existe aucun instant sans fichier principal.
+    try {
+      await fsp.copyFile(file(MAIN_FILE), asideName(file(MAIN_FILE), 'unreadable'));
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    await copyAtomic(file(BAK_FILE), file(MAIN_FILE));
+    // Relecture complète : la sauvegarde peut être d'un schéma plus ancien
+    // (migrée ici, avec sa propre sauvegarde préalable) ou plus récent
+    // (lecture seule). `result` a la même forme que la réponse de load().
+    const result = await loadInner();
+    return { ok: true, accounts: result.accounts || accounts, result };
+  }).catch(err => {
+    console.error('[accounts] restauration impossible :', err.code || err.message);
+    return { ok: false, error: err.code || err.message };
+  });
 }
 
 // Migration depuis le localStorage de la 1.0.4. Les chaînes brutes sont
@@ -254,6 +406,9 @@ function migrateLegacy(payload) {
 
   return serial(async () => {
     if ((await decodeFile(file(MAIN_FILE))).status !== 'missing') return { ok: false, error: 'exists' };
+    // Un .bak orphelin (sans fichier principal) serait écrasé, voire effacé
+    // si la vérification échoue : on en garde d'abord une copie.
+    await preserveBackup('pre-migration');
 
     await fsp.mkdir(file(BACKUP_DIR), { recursive: true });
     const preFile = path.join(file(BACKUP_DIR), `pre-migration-${stamp()}.json`);
@@ -264,8 +419,10 @@ function migrateLegacy(payload) {
     await writeAtomic(preFile, encode(preRaw));
 
     const written = [[preFile, preRaw]];
-    if (backup != null) { await writeAtomic(file(BAK_FILE), encode(backup)); written.push([file(BAK_FILE), backup]); }
-    if (current != null) { await writeAtomic(file(MAIN_FILE), encode(current)); written.push([file(MAIN_FILE), current]); }
+    // Les listes de la 1.0.4 sont au schéma 1 : si l'app en est à un schéma
+    // plus récent, le chargement qui suit les migre (avec sa sauvegarde).
+    if (backup != null) { await writeAtomic(file(BAK_FILE), encode(backup, 1)); written.push([file(BAK_FILE), backup]); }
+    if (current != null) { await writeAtomic(file(MAIN_FILE), encode(current, 1)); written.push([file(MAIN_FILE), current]); }
 
     for (const [p, expected] of written) {
       const back = await decodeFile(p);
@@ -313,7 +470,13 @@ function confirmRevert() {
 }
 
 module.exports = {
-  load, save, restoreBackup, migrateLegacy, pendingRevert, confirmRevert, revertRequested,
+  load, save, restoreBackup, migrateLegacy, pendingRevert, confirmRevert, revertRequested, REVERT_FLAG,
   isIdle, whenIdle,
-  _test: { sanitizeList, parseRaw }
+  SCHEMA,
+  _test: {
+    sanitizeList, parseRaw, runMigrations,
+    // Remplace le schéma courant et les migrations (tests uniquement).
+    setSchema(schema, steps) { currentSchema = schema; migrations = steps; },
+    resetSchema() { currentSchema = SCHEMA; migrations = MIGRATIONS; }
+  }
 };

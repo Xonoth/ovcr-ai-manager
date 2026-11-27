@@ -17,12 +17,13 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 
 ## 2. Stack technique
 
-- **Electron** `^43.7.1` (app desktop, un process principal + un renderer).
+- **Electron** `^43.8.10` (app desktop, un process principal + un renderer ; Chromium 150.0.7871.250).
 - **HTML/CSS/JS vanilla** — pas de framework (pas de React/Vue). Le front = `index.html` (HTML + CSS + CSP) + `renderer/app.js` (toute la logique, script classique) + `assets/icons.js` (icônes). Le JS a été sorti d'`index.html` en phase 1 sécurité pour que la CSP interdise les scripts inline.
 - **Monaco Editor** `^0.45.0` (l'éditeur de VS Code), chargé en local depuis `node_modules`.
 - **Polices & icônes 100% LOCALES** (plus aucun CDN externe) : polices Google Fonts en `.woff2` sous `assets/fonts/`, icônes ex-Font Awesome converties en **SVG inline** dans `assets/icons.js`. L'app s'affiche donc identiquement hors-ligne.
 - **Packaging** : `@electron/packager` (génère un dossier + `.exe`). `electron-builder` a été **retiré des devDependencies** (septembre 2026) : il **ne fonctionne pas sur cette machine** (il exige des droits admin/Mode développeur pour créer des liens symboliques) et traînait 11 alertes `npm audit` dont une critique. Le bloc `build` de `package.json` (config electron-builder) est **conservé** : il ne coûte rien et servira tel quel si on réinstalle l'outil un jour.
-- Pas de TypeScript, pas de bundler (Webpack/Vite), pas de tests automatisés.
+- Pas de TypeScript, pas de bundler (Webpack/Vite).
+- **Tests automatisés** (phase 2) : `node:test` intégré à Node (aucune dépendance) pour les tests unitaires, Electron lui-même pour les tests d'intégration. **ESLint** (`eslint`, `@eslint/js`, `globals`, versions figées) en dépendance de **développement** uniquement — jamais dans le `.exe`. Voir §4.
 
 ## 3. Structure des fichiers
 
@@ -30,11 +31,19 @@ C'est un outil **personnel / communautaire** (communauté « OverCreep »), au t
 ai-manager/
 ├── index.html          # Interface : HTML + CSS (<style>) + CSP (<meta>). Plus aucun script inline ni onclick.
 ├── renderer/
-│   └── app.js          # Toute la logique de l'interface (ex-<script> d'index.html), SANS accès Node : passe par window.ovcr.
+│   ├── app.js          # Toute la logique de l'interface (ex-<script> d'index.html), SANS accès Node : passe par window.ovcr.
+│   ├── cooldowns.js    # (phase 2) États et libellés des cooldowns, fonctions pures (window.OVCRCooldowns, testable sous Node).
+│   └── pane-errors.js  # (phase 2) Classification des erreurs des panneaux IA, fonctions pures (window.OVCRPaneErrors).
 ├── app-preload.js      # Preload de la fenêtre hôte : expose window.ovcr (liste fermée de méthodes, contextBridge).
-├── main.js             # Process principal Electron. Fenêtre sécurisée + IPC validés (expéditeur vérifié) + durcissement navigation/popups/webviews.
+├── main.js             # Process principal Electron. Instance unique, fenêtre sécurisée + IPC validés (expéditeur vérifié) + durcissement navigation/popups/webviews + résilience (plantages, popups en échec).
+├── security-policy.js  # (phase 2) Règles de sécurité PURES extraites de main.js (liste blanche, partitions, expéditeur IPC) — testées.
+├── atomic-file.js      # (phase 2) Écriture atomique (tmp + fsync + renommage, nouvelles tentatives si fichier verrouillé).
+├── diagnostics.js      # (phase 2) Journal local expurgé (userData/logs), erreurs non interceptées, rapports de l'interface.
 ├── file-access.js      # Fichiers de l'explorateur/éditeur : racines autorisées, chemins résolus, limites (voir SECURITY.md §4).
-├── accounts-store.js   # Comptes : stockage chiffré safeStorage dans userData, sauvegarde, migration depuis localStorage, retour arrière.
+├── accounts-store.js   # Comptes : stockage chiffré safeStorage, sauvegardes, versionnement du schéma + migrations, récupération, retour arrière.
+├── eslint.config.js    # (phase 2) ESLint — développement uniquement, exclu du .exe.
+├── test/               # (phase 2) unit/ (node:test), integration/ (Electron réel, userData temporaire), fixtures/, helpers/ — exclu du .exe.
+├── TESTS-MANUELS.md    # (phase 2) Ce qui ne peut PAS être testé automatiquement (services IA réels, OAuth, vraie coupure réseau…).
 ├── SECURITY.md         # Modèle de sécurité, CSP, stockage, limites restantes, pistes.
 ├── browser-identity.js # Identité navigateur des webviews/popups : Firefox sur Google, Chrome ailleurs ; FedCM désactivé — connexion Google.
 ├── browser-identity-preload.js # Preload de session : aligne navigator sur Firefox sur les pages Google.
@@ -63,6 +72,12 @@ ai-manager/
 ## 4. Comment lancer / construire
 
 - **Lancer en dev** : `npm start` (= `electron .`)
+- **Tests** (phase 2) — à lancer avant tout build :
+  - `npm test` : tests **unitaires** (`node --test`, Electron simulé par `test/helpers/fake-electron.js`) : stockage, écritures interrompues, migrations, cooldowns (fuseau Europe/Paris, changements d'heure), règles de sécurité, accès fichiers, autorisations, diagnostics, classification des erreurs.
+  - `npm run test:electron` : tests d'**intégration** — un vrai Electron par scénario, dossier de données **temporaire** (le vrai profil n'est jamais touché), **aucun accès réseau** (les pages de service sont factices, servies localement). Couvre démarrage, isolation/CSP/IPC, récupération après corruption, pannes de stockage, migration 1.0.4, schéma futur, diagnostics, erreurs de panneau (plantage réel, échec de chargement), cooldowns, instance unique.
+  - `npm run test:perf` : mesures (mémoire, fuites de webviews/processus/tas JS sur 30 ouvertures).
+  - `npm run lint` : ESLint.
+  - Les **tests manuels** (vrais services IA, OAuth, vraie coupure réseau…) sont listés dans `TESTS-MANUELS.md`.
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
   → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-1.1.0.zip` (~136 Mo, contient le dossier complet — 130 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
@@ -81,16 +96,27 @@ ai-manager/
 Deux endroits distincts, à ne pas confondre :
 
 1. **Métadonnées des comptes** → tenues par le **processus principal** (`accounts-store.js`), depuis la phase 1 sécurité.
-   - `%APPDATA%\ai-manager\accounts.json` : tableau JSON de comptes, dans une enveloppe `{format:"ovcr-accounts", version:1, encryption:"safeStorage"|"none", payload}` ; charge utile **chiffrée `safeStorage`** (DPAPI). `"none"` seulement si le chiffrement est indisponible (rechiffré au lancement suivant).
-   - `accounts.json.bak` : **génération précédente** (copiée avant chaque écrasement si elle est valide) — remplace `ai_accounts_backup`.
-   - `backups/pre-migration-<date>.json` : sauvegarde chiffrée de l'état `localStorage` d'origine, faite avant la migration.
-   - Fichier illisible → jamais supprimé : renommé `accounts.unreadable-<date>.json`.
-   - Le renderer n'écrit jamais ces fichiers : `saveAccounts()` envoie un instantané par `window.ovcr.accounts.save()`, le main **valide** (types, tailles, couleur `#hex`, profil non vide sans caractère de contrôle) puis écrit de façon **atomique** (fichier temporaire + `fsync` + renommage), une écriture à la fois, et retarde la fermeture de l'app tant qu'une écriture est en cours.
+   - `%APPDATA%\ai-manager\accounts.json` : tableau JSON de comptes, dans une enveloppe `{format:"ovcr-accounts", version:1, schema:1, encryption:"safeStorage"|"none", payload}` ; charge utile **chiffrée `safeStorage`** (DPAPI). `"none"` seulement si le chiffrement est indisponible (rechiffré au lancement suivant).
+   - `accounts.json.bak` : **génération précédente** (copiée de façon **atomique** avant chaque écrasement si elle est valide) — remplace `ai_accounts_backup`.
+   - `backups/` (rien n'y est jamais supprimé par l'app) :
+     - `pre-migration-<date>.json` : état `localStorage` d'origine (1.0.4), chiffré, fait avant la migration ;
+     - `pre-schema-v<n>-v<m>-<date>.json` : copie exacte du fichier avant une migration de schéma ;
+     - `bak-preserved-<raison>-<date>.json` : copie de `.bak` mise à l'abri quand le fichier principal est illisible ou absent (sinon deux enregistrements pouvaient écraser la seule sauvegarde valide — audit phase 2, C1).
+   - Fichier illisible → jamais supprimé : renommé (ou copié) `accounts.unreadable-<date>.json`.
+   - Le renderer n'écrit jamais ces fichiers : `saveAccounts()` envoie un instantané par `window.ovcr.accounts.save()`, le main **valide** (types, tailles, couleur `#hex`, profil non vide sans caractère de contrôle) puis écrit de façon **atomique** (`atomic-file.js` : temporaire + `fsync` + renommage, nouvelles tentatives si un antivirus verrouille brièvement le fichier), une écriture à la fois, et retarde la fermeture de l'app (5 s max) tant qu'une écriture est en cours.
+   - **Statuts de lecture** (`load()`) : `ok`, `empty` (vrai premier lancement), `missing` (principal absent mais `.bak` lisible → restauration proposée), `corrupt` (y compris JSON valide qui n'est pas un tableau), `undecryptable`, `newer` (schéma/conteneur plus récent → **lecture seule**), `migration_failed` (données d'origine intactes → **lecture seule**).
+   - **Mode protégé du renderer** : si l'état du stockage est inconnu (erreur IPC) ou `newer`/`migration_failed`, les écritures sont **bloquées** (bandeau persistant, `ensureWritable()`), pour ne jamais écraser les vrais comptes par une liste vide ou incomplète. Un enregistrement en échec laisse un **bandeau persistant** avec « Réessayer ».
+   - **Versionnement** : `schema` dans l'enveloppe (absent = 1). La charge utile reste **un tableau** à tous les schémas → une version antérieure (1.1.0) relit toujours tous les comptes. Migrations dans `MIGRATIONS` (`accounts-store.js`), fonctions pures et idempotentes, avec sauvegarde préalable, validation (aucun compte perdu, ids et profils inchangés), écriture atomique puis relecture ; interrompue → refaite au lancement suivant. Schéma courant : **1** (aucune migration réelle n'a encore été nécessaire ; le mécanisme est testé avec des migrations factices).
    - **Migration automatique** au 1er lancement : les anciennes clés `localStorage` `ai_accounts` / `ai_accounts_backup` sont reprises telles quelles, vérifiées, puis effacées. **Retour arrière** : lancer avec `--revert-storage-migration` (voir SECURITY.md §5).
-   - **Chargement résilient** inchangé côté utilisateur : donnée corrompue ou indéchiffrable → modale proposant la sauvegarde (`api.accounts.restoreBackup()`).
-2. **Préférences d'affichage** → `localStorage` du renderer (non sensibles, en clair) :
-   - Clés `ide_w`, `explorer_w` : largeurs mémorisées des colonnes.
-   - Clé `collapsed_accounts` : tableau JSON des ids de comptes dont la carte est **repliée** (vue compacte). Lecture/écriture défensives (`try/catch`), purgée des ids de comptes supprimés à chaque écriture (`saveCollapsed()`).
+   - **Chargement résilient** : donnée corrompue, indéchiffrable ou fichier principal introuvable → modale proposant la sauvegarde ; « Continuer sans restaurer » garde une copie de la sauvegarde dans `backups/`.
+   - **Réparation au chargement** (`migrateOldAccounts()`, renderer) : services/cooldowns manquants complétés ; **profil vide ou invalide** (accepté par la 1.0.4) remplacé par le premier `profil_N` libre, avec un message — sans cela, le main refusait d'enregistrer TOUTE la liste (bug réel, trouvé en phase 2).
+2. **Préférences d'affichage** → `localStorage` du renderer (non sensibles, en clair), via l'objet `prefs` de `renderer/app.js` :
+   - Clé `prefs_schema` (absente = 1) : préférences d'une version plus récente → lues, jamais réécrites.
+   - Clés `ide_w`, `explorer_w` : largeurs mémorisées des colonnes (`<nombre>px`, valeur invalide ignorée).
+   - Clé `collapsed_accounts` : tableau JSON des ids de comptes dont la carte est **repliée** (vue compacte), purgé des ids de comptes supprimés à chaque écriture (`saveCollapsed()`).
+   - Un échec d'écriture est journalisé (console → journal de diagnostic), jamais bloquant.
+2 bis. **Autorisations des sites** → `site-permissions.json` : écriture atomique ; clé réservée `"$schema"` (ignorée par la 1.1.0) ; fichier illisible **mis de côté** (`site-permissions.unreadable-<date>.json`) au lieu d'être écrasé ; entrées mal formées ignorées.
+2 ter. **Journal de diagnostic** → `%APPDATA%\ai-manager\logs\ovcr.log` (+ `.1`, `.2`, 1 Mo chacun) — voir §13 « Phase 2 ».
 
 3. **Sessions de connexion IA (cookies/tokens)** → dossier de données Electron.
    - Chemin : `%APPDATA%\ai-manager\Partitions\profil_X\` (un dossier par profil).
@@ -107,10 +133,17 @@ Deux endroits distincts, à ne pas confondre :
   "color": "#ffb347",              // couleur de la pastille d'avatar
   "services": ["claude","chatgpt","gemini","perplexity","zeta","grok","leonardo","suno","meshy"],
   "cooldowns": { "claude":0, "chatgpt":0, "gemini":0, "perplexity":0, "zeta":0, "grok":0, "leonardo":0, "suno":0, "meshy":0 }
-  // cooldown = timestamp ms de fin de cooldown (0 = disponible)
+  // cooldown = échéance en ms depuis l'époque Unix (UTC) ; 0 = rien de marqué
 }
 ```
-Une fonction `migrateOldAccounts()` répare/complète automatiquement les anciens comptes (ajoute services/cooldowns manquants).
+Une fonction `migrateOldAccounts()` répare/complète automatiquement les anciens comptes (ajoute services/cooldowns manquants, remplace un profil vide/invalide).
+
+**Cooldowns (phase 2, `renderer/cooldowns.js`)** — toujours marqués **à la main** ; l'app ne détecte pas (et ne prétend pas détecter) un quota réellement épuisé. États dérivés de l'échéance (durée fixe 24 h, donc « marqué à » = échéance − 24 h, sans champ supplémentaire) :
+- **non suivi** (`unknown`) : 0, ou terminé depuis plus de 24 h → bouton « Épuiser (24h) » ;
+- **actif** (`active`) : échéance à venir → « ⏳ 5h 07m », service grisé ; annuler demande **deux clics** (« Confirmer ? », 5 s) ;
+- **terminé** (`ended`) : échéance passée depuis < 24 h → « ✓ Fini 14:05 », service réactivé automatiquement (l'échéance n'est plus remise à 0) ;
+- **incohérent** (`inconsistent`) : échéance > 24 h dans le futur (horloge reculée) → « ⚠ Échéance incohérente », compté épuisé, réinitialisation avec confirmation ; signalé dans le journal au démarrage.
+Changements d'heure été/hiver sans effet (timestamps UTC, 24 vraies heures). Statistique renommée **« Hors cooldown »** (au lieu de « IA disponibles », qui prétendait savoir).
 
 ## 6. Services IA (liste en dur dans `initApp`)
 
@@ -137,10 +170,12 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 
 - `renderAccounts()` — rend les cartes de comptes (avatar, boutons de service, cooldowns). **Toutes les données de compte sont échappées** (`escapeHtml`) et les cartes n'ont **plus d'`onclick` inline** : les actions passent par des `data-*` lus par la délégation d'événements (voir plus bas). Quand la liste est **vide**, affiche un bouton d'appel à l'action « Créer mon premier compte ».
 - **Vue compacte (repli/dépli des cartes)** : cliquer sur le **header** d'une carte (`data-action="toggle-collapse"` sur `.account-header` — les boutons éditer/supprimer imbriqués gardent la priorité via `closest()`) replie/déplie sa grille de services ; repliée, la carte affiche un badge **« N/9 »** (services hors cooldown / total, ambré si un cooldown est actif, resynchronisé par le tick des cooldowns) + un chevron pivoté. Un bouton global « Tout replier / Tout déplier » (`#btnToggleAllCards`, dans l'en-tête de la liste) bascule toutes les cartes. Fonctions : `toggleCardCollapse(accId)`, `toggleAllCards()`, `saveCollapsed()` ; état persisté dans `localStorage.collapsed_accounts` (voir §5) ; défaut = tout déplié ; `openService` **déplie automatiquement** la carte du compte utilisé (utile depuis la palette Ctrl+K). Animation CSS pure (`grid-template-rows: 1fr → 0fr` sur `.services-wrap`, enfant `overflow:hidden`).
-- `openService(accId, svcId)` — crée un `<webview partition="persist:<profil>" src="<url>">` dans le panneau actif, et déplie la carte du compte si elle était repliée.
+- `openService(accId, svcId)` — choisit le panneau, déplie la carte du compte, puis `mountService(pane, acc, svc)` crée le `<webview partition="persist:<profil>" src="<url>">` avec son cycle de vie (phase 2) : spinner de chargement, **écran d'erreur** sur `did-fail-load` (cadre principal, sauf -3), `render-process-gone` et `unresponsive`, avec les actions **Réessayer**, **Recharger le service** (recrée la webview, même partition → session conservée), **Ouvrir dans le navigateur** (`window.ovcr.services.openInBrowser`, adresse https du service vérifiée par le main), **Fermer le panneau** (`closePane(n)`), **Informations de diagnostic** (code, hôte seul, service). Messages dans `renderer/pane-errors.js` ; jamais présentés comme un quota. Bandeau « Hors ligne » discret en haut des panneaux ouverts (`offline`/`online`). Les popups OAuth en échec affichent une boîte native (Réessayer / navigateur / Fermer) côté main.
+- **Diagnostic** (page d'aide `?` → « Diagnostic ») : versions, état du stockage, écriture possible ou bloquée, mémoire par type de processus, panneaux ouverts, derniers événements du journal ; boutons « Copier le diagnostic » et « Ouvrir le dossier des journaux ». Tout est expurgé (aucun e-mail, URL réduite à l'hôte).
 - **Bouton « Ajouter un compte »** : un `+` en tête de la liste (à côté du titre « Comptes enregistrés ») + le bouton « Créer mon premier compte » de l'état vide. Les deux portent `data-action="add"` → `openModal()` en mode ajout. *(Avant ce lot, aucun bouton d'ajout n'existait dans l'UI.)*
 - `openModal()` / `saveAccount()` / `openDeleteModal()` / `confirmDelete()` — CRUD des comptes.
-- `toggleCooldown(accId, svcId)` — bascule le cooldown 24h d'un service.
+- `toggleCooldown(accId, svcId)` — marque un service épuisé pour 24 h, ou annule un cooldown actif/incohérent après confirmation (deux clics). Voir « Cooldowns » au §5.
+- Modifier le **profil** d'un compte existant affiche un avertissement dans la fenêtre (`#profileWarning`) : c'est changer de session de connexion.
 - `setLayout(mode)` — vue 1 ou 2 panneaux ; gère la poignée de redimensionnement entre panneaux IA. Repasser en vue simple **ne détruit pas** la webview du panneau 2 (session conservée, mais RAM occupée ~100-250 Mo).
 - **Bouton « Fermer le panneau 2 »** (`#btnClosePane2`, icône `times-circle` dans la barre du workspace) : visible **uniquement** quand une webview vit dans le panneau 2 (y compris cachée en vue simple — géré par `updateClosePane2Btn()`, appelée par `openService`/`closePane2`). `closePane2()` détruit la webview (`innerHTML` → le process invité Chromium est tué, RAM libérée), restaure le placeholder « Panneau 2 vide » et masque le bouton. En vue scindée, `openService` **cible en priorité un panneau vide** (le panneau 2 fraîchement fermé est re-rempli au prochain service, sans écraser le panneau 1) ; l'alternance habituelle reprend quand les deux panneaux sont occupés.
 - `toggleDashboard()` / `toggleExplorer()` / `toggleIdePanel()` — replier/déplier les panneaux.
@@ -160,7 +195,8 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 - Accent principal : **`--accent: #8b5cf6`** (violet officiel OverCreep). Rose : `--rose: #f230aa`. Halo : `--accent-glow: rgba(139,92,246,.35)`.
 - Fonds sombres légèrement violacés (`--bg: #0b0817`, relevé sur overcreep.ovh), bordures teintées violet, fond « aurora » en dégradés radiaux CSS purs.
 - Logo (`.header__icon`) : dégradé **rose → violet** (`var(--rose)` → `var(--accent)`).
-- Stats : « Comptes actifs » en violet, « IA disponibles » en rose.
+- Stats : « Comptes actifs » en violet, « Hors cooldown » en rose (ex-« IA disponibles », renommé en phase 2).
+- Éléments ajoutés en phase 2, sur les **mêmes variables** du thème : bandeau d'alerte persistant `.app-banner`, écran d'erreur de panneau `.pane-error*`, bandeau `.pane-offline`, états de cooldown `.cooldown-btn.ended/.inconsistent/.confirming` (avertissement = `--warning`), avertissement de formulaire `.form-warning`, diagnostic `.diag-*`.
 - Les couleurs de marque des IA (Claude/ChatGPT/Gemini/Perplexity/Grok) sont **conservées** pour la reconnaissance ; Z.ai est violet et s'intègre au thème ; Leonardo AI est magenta (`--leonardo: #d946ef`), distinct du violet Z.ai et du rose du thème. Suno est **orange-rouge** (`--suno: #f8441b` — sa marque officielle est noir/blanc, on reprend le pôle orange du dégradé signature rose→orange de son app, le rose étant trop proche de Leonardo) ; Meshy AI est **vert lime** (`--meshy: #c5f955`, couleur dominante relevée sur meshy.ai).
 - Polices et icônes **désormais 100% locales** (`assets/fonts/` + `assets/icons.js`) — plus aucune dépendance Internet pour l'ossature visuelle. Monaco est local. Les `@font-face` sont dans le `<style>` d'`index.html` avec des chemins **relatifs** (valables en dev ET en `.exe`).
 
@@ -176,7 +212,8 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 - **Fenêtre hôte** : `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`, `webviewTag: true`, preload `app-preload.js`. `app.enableSandbox()` sandboxe tous les processus de rendu. La page n'a **ni `require` ni `process`** ; elle n'a que `window.ovcr` :
   - `files` : `selectFolder()`, `listDirectory(dir)`, `readFile(path)` → `{ok, content, readOnly}` / `{ok:false, error}`, `saveFile(path, content)` → `{ok}` / `{ok:false, error}` ;
   - `accounts` : `load()`, `save(list)`, `restoreBackup()`, `migrateLegacy({current, backup})` ;
-  - `storage` : `pendingRevert()`, `confirmRevert()` ; `sitePermissions` : `reset()`.
+  - `storage` : `pendingRevert()`, `confirmRevert()` ; `sitePermissions` : `reset()` ;
+  - `services` : `openInBrowser(url)` (https + liste blanche, sinon refus) ; `diag` : `report({level, message, stack})` (validé, borné, 60/min), `get()`, `openLogs()` (chemin fixe).
   Chaque canal IPC passe par `handle()` dans `main.js`, qui vérifie l'**expéditeur** (`isTrustedSender` : cadre principal de la fenêtre hôte, URL = exactement l'`index.html` local, comparaison par chemin, robuste aux `[ ]`/espaces/accents du dossier packagé). Pour ajouter une opération : un canal dédié dans `main.js` + une méthode dans `app-preload.js` + la validation des paramètres **dans le main**. Jamais de canal générique.
 - **CSP** (`<meta>` dans `index.html`) : `script-src 'self'` (aucun inline, aucun `eval`), `style-src 'self' 'unsafe-inline'` (Monaco + attributs `style`), `connect-src 'self'`, `worker-src 'self'`, `frame-src`/`object-src 'none'`. Ne s'applique qu'à l'interface, pas aux sites des webviews. Conséquence : **aucun `onclick`/`oninput` dans le HTML** — les boutons statiques portent `data-cmd="…"`, traité par la table `COMMANDS` de `renderer/app.js`.
 - **Monaco** charge en **mode navigateur** : `loadMonaco()` injecte `loader.js` à la première ouverture de l'éditeur, avec une URL absolue calculée par `new URL(…, location.href)` (ok en dev et en `.exe` : asar/asar.unpacked transparents). Plus de bascule `window.require`/`nodeRequire`. Les web workers fonctionnent (`worker-src 'self'`).
@@ -189,8 +226,9 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 
 ## 11. Limites connues / dettes
 
-- Tout dans un seul `index.html` (pas de séparation JS/CSS) — difficile à maintenir en grandissant. (Le seul fichier extrait à ce jour est `assets/icons.js`.)
-- Pas de tests automatisés dans le repo. *(Les fonctions pures du lot A/B/C — `escapeHtml`, `isAllowedPopup`, `readJSON`/`saveAccounts` — ont été validées par un script de test ponctuel hors repo, non conservé.)*
+- `renderer/app.js` reste un gros fichier (une fonction `initApp`) ; seules les parties pures ont été extraites (`cooldowns.js`, `pane-errors.js`). Découpage progressif possible, non entrepris (pas de refonte).
+- Tests : unitaires + intégration locaux (voir §4) ; les services IA réels, l'OAuth et une vraie coupure réseau restent **manuels** (`TESTS-MANUELS.md`).
+- `npm audit` : alertes restantes uniquement dans les outils de développement (packager, ESLint) ; `npm audit --omit=dev` ne voit pas Electron, qui est pourtant embarqué (voir SECURITY.md §6).
 - ~~Icônes/polices dépendent d'Internet (CDN).~~ **Corrigé** : tout est local (`assets/`).
 - `.exe` non signé (avertissement SmartScreen).
 - `electron-builder` inutilisable ici (droits symlinks) → on ne peut pas produire un vrai portable mono-fichier ni un installateur sans activer le Mode développeur Windows ou lancer en admin. Il n'est donc plus installé (voir §2) ; seule sa config `build` reste dans `package.json`.
@@ -396,7 +434,23 @@ Perplexity recevait ainsi la position de l'utilisateur sans question
 - **Vérifié** (harnais Electron, userData isolé) : isolation (`require`/`process` absents), migration chiffrée sans fuite en clair, persistance, validation des saves, CSP (inline/`eval` bloqués), navigation hôte bloquée, Monaco + worker + Ctrl+S, 14 cas d'accès fichier refusés (traversée, absolu, périphérique, type, écriture non ouverte…), webview Gemini (identité Firefox intacte, sandbox, partition), 4 webviews illégitimes refusées, popup Google autorisée (même session, sandbox), popups hors liste → navigateur système, IPC d'une autre fenêtre refusé, récupération corrompu/indéchiffrable, fermeture pendant écriture, **retour arrière relu par la vraie 1.0.4**, puis re-migration. Build packagé de test (asar) vérifié, y compris depuis un chemin avec `[ ]`, espaces et accents.
 - **Validé à la main par l'utilisateur** sur son vrai profil (migration réelle réussie, comptes, sessions, services OK). Livré en **version 1.1.0** (zip `dist/OVCR-AI-Manager-1.1.0.zip`).
 
+### Phase 2 — Fiabilité et robustesse (novembre 2026)
+
+Audit puis 8 lots, chacun testé avant le suivant. Version **1.2.0**, avec **Electron 43.7.1 → 43.8.10** (corrige les alertes de sécurité d'Electron, dont une « high » ; même Chromium 150.0.7871.250, donc identité Google inchangée). Build de test `dist/[OVCR] AI Manager-win32-x64` produit pour la validation manuelle (`TESTS-MANUELS.md`) ; **pas de zip ni de release** tant qu'elle n'est pas faite.
+
+- **Lot 0 — banc de tests** : `security-policy.js` (règles pures extraites de `main.js`, logique inchangée), `test/` (unitaires `node:test` + intégration Electron), scripts `npm test` / `npm run test:electron`.
+- **Lot 1 — stockage** : `atomic-file.js` (rotation `.bak` atomique, nouvelles tentatives EPERM/EBUSY/EACCES, pas de `.tmp` orphelin) ; sauvegarde mise à l'abri avant rotation quand le principal est illisible/absent (**C1**, bug réel reproduit : 2 enregistrements après « Ignorer » détruisaient la seule sauvegarde) ; mode protégé du renderer si la lecture échoue (**C2**) ; principal absent + `.bak` valide → restauration proposée (**E1**) ; restauration sans instant sans fichier ; **instance unique** (**E2**) ; charge utile non tableau = corrompue (**M1**) ; `site-permissions.json` atomique, illisible mis de côté (**M4**) ; bandeau persistant d'échec d'enregistrement (**M5**) ; fermeture attendue 5 s max (**M7**).
+- **Lot 2 — versionnement** : `schema` dans l'enveloppe, registre de migrations, sauvegarde/validation/relecture, lecture seule si plus récent (**E4**), versions des préférences et des autorisations. Correctif trouvé par les tests : un profil vide hérité de la 1.0.4 bloquait **tout** enregistrement → profil libre attribué.
+- **Lot 3 — diagnostics** : `diagnostics.js` (journal tournant expurgé), erreurs non interceptées main/interface, plantage de l'interface → « Recharger », erreurs IPC journalisées (réponse générique), écran d'erreur de démarrage, section « Diagnostic », plus aucun `catch` silencieux non justifié.
+- **Lot 4 — panneaux IA** : écran d'erreur par panneau + actions, popups OAuth en échec, bandeau hors ligne, canal `services:open-in-browser`.
+- **Lot 5 — cooldowns** : états non suivi / actif / terminé / incohérent, confirmation avant annulation, réactivation automatique, vérification au démarrage, aucun changement de format (compatible 1.1.0) ; avertissement au changement de profil (**M8**).
+- **Lot 6 — qualité** : ESLint (dev), 0 signalement ; globales voulues de l'interface listées dans `eslint.config.js`.
+- **Lot 7 — performance** (`npm run test:perf`, pages factices) : 1 panneau ≈ +200 Mo, panneau 2 caché ≈ +170 Mo (page factice : un vrai service pèse plus), libérés par « Fermer le panneau 2 » ; 30 remplacements de panneau : aucune webview orpheline, processus/tas JS/DOM stables, ~0,6 s par ouverture locale ; tick des cooldowns ≈ 1 µs. **Pas de suspension automatique** des webviews : la seule webview inactive possible est le panneau 2 caché, déjà libérable par un bouton (arbitrage utilisateur antérieur), et une suspension ferait perdre l'état des pages (saisie en cours).
+- **Tests** : 99 tests unitaires, 111 vérifications d'intégration, mesures de perf — tous verts au moment de la livraison. Manuels : `TESTS-MANUELS.md`.
+
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (le plus souvent `renderer/app.js` ou `index.html`, parfois `main.js` / un module du main), rappelle que c'est du **JS vanilla en script classique** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
 
 Réflexes : **toute donnée utilisateur injectée en HTML doit passer par `escapeHtml()`** ; **aucun script ni gestionnaire inline** (la CSP les bloque) : `data-cmd`/`data-action` + délégation ; les **écritures de comptes passent par `saveAccounts()`** ; **le renderer n'a pas Node** : un besoin système = une méthode dédiée dans `app-preload.js` + un canal `handle()` dans `main.js` + validation côté main ; une **nouvelle icône** s'ajoute dans `window.OVCR_ICONS` (`assets/icons.js`) puis s'utilise via `<span class="ic" data-icon="…">` + `hydrateIcons()`.
+
+Réflexes phase 2 : **toute écriture de fichier de données passe par `atomic-file.js`** ; un **changement de forme des comptes** = `SCHEMA` + une étape dans `MIGRATIONS` (pure, idempotente, charge utile toujours un tableau) + des tests dans `test/unit/migrations.test.js` ; une modification de comptes côté interface vérifie `ensureWritable()` ; **pas de `catch` vide** (journaliser, ou commenter pourquoi l'erreur est sans effet) ; les journaux ne contiennent **que des identifiants techniques** (id de compte, hôte, code), jamais un nom, un e-mail ou une URL complète ; une nouvelle fonction appelée depuis `COMMANDS`/la délégation et posée sur `window` doit être ajoutée aux globales de `eslint.config.js` ; lancer `npm test`, `npm run test:electron` et `npm run lint` avant tout build.
