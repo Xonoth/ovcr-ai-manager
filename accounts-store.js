@@ -31,6 +31,7 @@ const { app, safeStorage } = require('electron');
 const path = require('path');
 const fsp = require('fs').promises;
 const { writeAtomicText, copyAtomic, renameWithRetry, fileStamp } = require('./atomic-file');
+const transfer = require('./accounts-transfer');
 
 const FORMAT = 'ovcr-accounts';
 // Version du CONTENEUR (forme de l'enveloppe : format/encryption/payload).
@@ -466,33 +467,115 @@ function save(list) {
   if (r.error) return Promise.resolve({ ok: false, error: r.error });
   const raw = JSON.stringify(r.accounts);
   if (raw.length > MAX_RAW_CHARS) return Promise.resolve({ ok: false, error: 'données trop volumineuses' });
-  return serial(async () => {
-    const mainPath = file(MAIN_FILE);
-    const cur = await decodeFile(mainPath);
-    // Défense en profondeur (le renderer bloque déjà ces cas) : jamais
-    // d'écrasement d'un fichier d'une version plus récente, ni d'un fichier
-    // dont la migration n'a pas abouti (il serait « migré » sans sauvegarde).
-    if (cur.status === 'ok' && cur.newer) return { ok: false, error: 'newer_schema' };
-    if (cur.status === 'ok' && cur.schema !== currentSchema && parseRaw(cur.raw) !== null) return { ok: false, error: 'migration_pending' };
-    if (cur.status === 'ok' && parseRaw(cur.raw) !== null) {
-      // Génération précédente valide -> devient la sauvegarde (copie
-      // atomique : .bak n'est jamais à moitié écrit).
-      await copyAtomic(mainPath, file(BAK_FILE));
-    } else {
-      // Fichier actuel absent ou illisible : la sauvegarde est peut-être la
-      // seule copie valide -> copie mise à l'abri dans backups/ AVANT que les
-      // prochaines rotations ne l'écrasent.
-      await preserveBackup(cur.status === 'missing' ? 'main-missing' : 'main-unreadable');
-      // Fichier illisible : mis de côté (jamais détruit).
-      if (cur.status !== 'missing') await moveAside(mainPath, 'unreadable');
-    }
-    await writeEnvelope(mainPath, raw, currentSchema);
-    return { ok: true, encrypted: await canEncrypt() };
-  }).catch(err => {
+  return serial(() => writeInner(raw)).catch(err => {
     console.error('[accounts] échec d\'enregistrement :', err.code || err.message);
     return { ok: false, error: 'écriture impossible' };
   });
 }
+
+// Fichier principal non réécrivable (à appeler DANS serial()) : défense en
+// profondeur (le renderer bloque déjà ces cas) : jamais d'écrasement d'un
+// fichier d'une version plus récente, ni d'un fichier dont la migration n'a
+// pas abouti (il serait « migré » sans sauvegarde). null si l'écriture est permise.
+function writeBlocked(cur) {
+  if (cur.status === 'ok' && cur.newer) return 'newer_schema';
+  if (cur.status === 'ok' && cur.schema !== currentSchema && parseRaw(cur.raw) !== null) return 'migration_pending';
+  return null;
+}
+
+// Écriture d'une liste déjà validée (raw = JSON), à appeler DANS serial().
+async function writeInner(raw, cur) {
+  const mainPath = file(MAIN_FILE);
+  if (!cur) cur = await decodeFile(mainPath);
+  const blocked = writeBlocked(cur);
+  if (blocked) return { ok: false, error: blocked };
+  if (cur.status === 'ok' && parseRaw(cur.raw) !== null) {
+    // Génération précédente valide -> devient la sauvegarde (copie
+    // atomique : .bak n'est jamais à moitié écrit).
+    await copyAtomic(mainPath, file(BAK_FILE));
+  } else {
+    // Fichier actuel absent ou illisible : la sauvegarde est peut-être la
+    // seule copie valide -> copie mise à l'abri dans backups/ AVANT que les
+    // prochaines rotations ne l'écrasent.
+    await preserveBackup(cur.status === 'missing' ? 'main-missing' : 'main-unreadable');
+    // Fichier illisible : mis de côté (jamais détruit).
+    if (cur.status !== 'missing') await moveAside(mainPath, 'unreadable');
+  }
+  await writeEnvelope(mainPath, raw, currentSchema);
+  return { ok: true, encrypted: await canEncrypt() };
+}
+
+// ------------------------------------------- Export / import (phase 3, P7) --
+// Formats, validation et fusion : accounts-transfer.js (fonctions pures).
+// Boîtes de dialogue et fichier choisi par l'utilisateur : main.js.
+
+// Liste enregistrée sur le disque, qui fait foi (les enregistrements envoyés
+// avant l'appel sont passés : même file d'attente). { ok, accounts } ou
+// { ok: false, error } si la liste est illisible.
+function currentList() {
+  return serial(async () => {
+    const cur = await decodeFile(file(MAIN_FILE));
+    if (cur.status === 'missing') return { ok: true, accounts: [] };
+    const accounts = cur.status === 'ok' ? parseRaw(cur.raw) : null;
+    return accounts ? { ok: true, accounts } : { ok: false, error: 'unreadable' };
+  });
+}
+
+// Profils dont un dossier de session existe déjà (compte supprimé dont les
+// cookies sont restés) : un compte importé « comme nouveau » ne doit pas en
+// hériter. Lecture des NOMS seulement, rien n'est ouvert dans Partitions/.
+async function partitionNames() {
+  try { return new Set((await fsp.readdir(file('Partitions'))).map(n => n.toLowerCase())); }
+  catch (_) { return new Set(); }
+}
+
+const newAccountId = () => `acc_${Date.now()}_${require('crypto').randomBytes(3).toString('hex')}`;
+
+// Import : fusion des comptes importés (déjà validés par parseImport) avec la
+// liste enregistrée, selon `mode` ('skip' | 'replace' | 'copy'). Étapes :
+//   1. refus si le fichier principal ne peut pas être réécrit (même règle que save) ;
+//   2. copie du fichier principal tel quel (chiffré) dans backups/pre-import-<date>.json ;
+//   3. fusion, validation stricte, écriture comme un enregistrement normal.
+// Renvoie { ok, accounts, added, replaced, skipped, copied, backupFile }.
+function importAccounts(incoming, mode) {
+  if (!transfer.MODES.includes(mode)) return Promise.resolve({ ok: false, error: 'mode invalide' });
+  const parsed = sanitizeList(incoming, true);
+  if (parsed.error) return Promise.resolve({ ok: false, error: parsed.error });
+  return serial(async () => {
+    const mainPath = file(MAIN_FILE);
+    const cur = await decodeFile(mainPath);
+    const blocked = writeBlocked(cur);
+    if (blocked) return { ok: false, error: blocked };
+    const existing = cur.status === 'ok' ? (parseRaw(cur.raw) || []) : [];
+
+    let backupFile = null;
+    if (cur.status !== 'missing') {
+      await fsp.mkdir(file(BACKUP_DIR), { recursive: true });
+      const dest = path.join(file(BACKUP_DIR), `pre-import-${stamp()}.json`);
+      await copyAtomic(mainPath, dest);
+      backupFile = path.basename(dest);
+    }
+
+    const plan = transfer.planImport(existing, parsed.accounts);
+    const res = transfer.applyImport(existing, plan, mode, { newId: newAccountId, reservedProfiles: await partitionNames() });
+    const r = sanitizeList(res.accounts, true);
+    if (r.error) return { ok: false, error: r.error };
+    if (r.accounts.length > MAX_ACCOUNTS) return { ok: false, error: 'trop de comptes' };
+    const raw = JSON.stringify(r.accounts);
+    if (raw.length > MAX_RAW_CHARS) return { ok: false, error: 'données trop volumineuses' };
+    const w = await writeInner(raw, cur);
+    if (!w.ok) return w;
+    console.log(`[accounts] import (${mode}) : ${res.added} ajouté(s), ${res.replaced} remplacé(s), ${res.copied} copié(s), ${res.skipped} ignoré(s)`
+      + (backupFile ? ` ; sauvegarde : ${backupFile}` : ''));
+    return { ok: true, accounts: r.accounts, encrypted: w.encrypted, added: res.added, replaced: res.replaced, skipped: res.skipped, copied: res.copied, backupFile };
+  }).catch(err => {
+    console.error('[accounts] import impossible :', err.code || err.message);
+    return { ok: false, error: 'écriture impossible' };
+  });
+}
+
+// Dépendances de accounts-transfer.parseImport (validation du stockage).
+const importDeps = () => ({ schema: currentSchema, sanitizeList, runMigrations });
 
 function restoreBackup() {
   return serial(async () => {
@@ -601,6 +684,7 @@ function confirmRevert() {
 module.exports = {
   load, save, restoreBackup, migrateLegacy, pendingRevert, confirmRevert, revertRequested, REVERT_FLAG,
   isIdle, whenIdle, prepareKey,
+  currentList, importAccounts, importDeps,
   SCHEMA,
   _test: {
     sanitizeList, parseRaw, runMigrations,

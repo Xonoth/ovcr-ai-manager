@@ -401,3 +401,48 @@ test('migration avec un .bak orphelin : il est mis à l\'abri avant d\'être rem
 });
 
 // E4 (schéma plus récent) : voir migrations.test.js
+
+// ------------------------------------------- Export / import (phase 3, P7) --
+
+test('import : sauvegarde préalable chiffrée dans backups/, puis rotation normale (.bak)', async () => {
+  await store.save([acc(1)]);
+  const before = fs.readFileSync(p('accounts.json'), 'utf8');
+  const r = await store.importAccounts([acc(2)], 'skip');
+  assert.equal(r.ok, true);
+  assert.deepEqual([r.added, r.skipped], [1, 0]);
+  assert.match(r.backupFile, /^pre-import-.*\.json$/);
+  assert.equal(fs.readFileSync(p(path.join('backups', r.backupFile)), 'utf8'), before, 'copie à l\'identique (chiffrée)');
+  assert.equal(fs.readFileSync(p('accounts.json.bak'), 'utf8'), before);
+  assert.deepEqual(ids((await store.load()).accounts), ['acc_1', 'acc_2']);
+});
+
+test('import sur un profil sans comptes : aucune sauvegarde à faire', async () => {
+  const r = await store.importAccounts([acc(1)], 'skip');
+  assert.equal(r.ok, true);
+  assert.equal(r.backupFile, null);
+  assert.equal(fs.existsSync(p('backups')), false);
+});
+
+test('import refusé si le fichier est d\'une version plus récente (rien d\'écrit)', async () => {
+  writeEnvelope('accounts.json', JSON.stringify([acc(1)]), { schema: 99 });
+  const original = fs.readFileSync(p('accounts.json'), 'utf8');
+  const r = await store.importAccounts([acc(2)], 'replace');
+  assert.deepEqual(r, { ok: false, error: 'newer_schema' });
+  assert.equal(fs.readFileSync(p('accounts.json'), 'utf8'), original);
+  assert.equal(fs.existsSync(p('backups')), false);
+});
+
+test('import : mode inconnu ou comptes invalides refusés avant toute écriture', async () => {
+  await store.save([acc(1)]);
+  assert.equal((await store.importAccounts([acc(2)], 'fusion')).ok, false);
+  assert.equal((await store.importAccounts([acc(2, { profile: '' })], 'skip')).error, 'profil invalide');
+  assert.equal(fs.existsSync(p('backups')), false);
+});
+
+test('currentList : liste du disque, vide si absente, erreur si illisible', async () => {
+  assert.deepEqual(await store.currentList(), { ok: true, accounts: [] });
+  await store.save([acc(1)]);
+  assert.deepEqual(ids((await store.currentList()).accounts), ['acc_1']);
+  fs.writeFileSync(p('accounts.json'), '{ abîmé');
+  assert.deepEqual(await store.currentList(), { ok: false, error: 'unreadable' });
+});

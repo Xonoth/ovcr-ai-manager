@@ -70,6 +70,9 @@ sitePermissions.install(app);
 
 const fileAccess = require('./file-access');
 const accountsStore = require('./accounts-store');
+const accountsTransfer = require('./accounts-transfer');
+const { writeAtomicText } = require('./atomic-file');
+const fsp = require('fs').promises;
 
 const policy = require('./security-policy');
 const { isAllowedPopup, isAllowedWebviewSrc, isValidPartition, hostOf } = policy;
@@ -410,6 +413,81 @@ handle('accounts:restore-backup', () => accountsStore.restoreBackup().then(res =
   return res;
 }));
 handle('accounts:migrate-legacy', (payload) => accountsStore.migrateLegacy(payload));
+
+// Export / import des comptes (phase 3, P7). L'interface ne choisit JAMAIS de
+// chemin : les boîtes « Enregistrer sous » / « Ouvrir » sont ouvertes ici, et
+// seul le NOM du fichier choisi repart vers l'interface. Le fichier exporté
+// est en clair (l'interface prévient avant) et ne contient ni cookies ni
+// sessions. Formats, validation, fusion : accounts-transfer.js.
+const pad2 = n => String(n).padStart(2, '0');
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+const JSON_FILTERS = [{ name: 'Comptes exportés (JSON)', extensions: ['json'] }];
+
+handle('accounts:export', async () => {
+  const cur = await accountsStore.currentList();
+  if (!cur.ok) return { ok: false, error: cur.error };
+  if (cur.accounts.length === 0) return { ok: false, error: 'nothing' };
+  const r = await dialog.showSaveDialog(mainWindow, {
+    title: 'Exporter les comptes (fichier en clair)',
+    defaultPath: path.join(app.getPath('documents'), `ovcr-comptes-${today()}.json`),
+    filters: JSON_FILTERS,
+    properties: ['showOverwriteConfirmation']
+  });
+  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+  const text = accountsTransfer.buildExport(cur.accounts, { schema: accountsStore.SCHEMA, appVersion: APP_VERSION.version });
+  try {
+    await writeAtomicText(r.filePath, text);
+  } catch (err) {
+    console.error('[accounts] export impossible :', err.code || err.message);
+    return { ok: false, error: 'write_failed' };
+  }
+  console.log(`[accounts] ${cur.accounts.length} compte(s) exporté(s) dans ${path.basename(r.filePath)}`);
+  return { ok: true, count: cur.accounts.length, fileName: path.basename(r.filePath) };
+});
+
+// Import en deux temps : choix et lecture du fichier (résumé des conflits),
+// puis application du choix de l'utilisateur. Les comptes lus restent ICI
+// (jamais renvoyés à l'interface avant application), liés à un jeton à usage unique.
+let pendingImport = null;
+handle('accounts:import-pick', async () => {
+  pendingImport = null;
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Importer des comptes', filters: JSON_FILTERS, properties: ['openFile']
+  });
+  if (r.canceled || !r.filePaths || r.filePaths.length === 0) return { ok: false, canceled: true };
+  const filePath = r.filePaths[0];
+  let text;
+  try {
+    const st = await fsp.stat(filePath);
+    if (!st.isFile()) return { ok: false, error: 'unreadable' };
+    if (st.size > accountsTransfer.MAX_IMPORT_CHARS * 4) return { ok: false, error: 'too_large' };
+    text = await fsp.readFile(filePath, 'utf8');
+  } catch (err) {
+    console.warn('[accounts] fichier d\'import illisible :', err.code || err.message);
+    return { ok: false, error: 'unreadable' };
+  }
+  const parsed = accountsTransfer.parseImport(text, accountsStore.importDeps());
+  if (!parsed.ok) {
+    console.warn('[accounts] import refusé :', parsed.error, parsed.detail || '');
+    return { ok: false, error: parsed.error, detail: parsed.detail };
+  }
+  const cur = await accountsStore.currentList();
+  if (!cur.ok) return { ok: false, error: cur.error };
+  const token = require('crypto').randomBytes(16).toString('hex');
+  pendingImport = { token, accounts: parsed.accounts };
+  return { ok: true, token, fileName: path.basename(filePath), summary: accountsTransfer.summarize(accountsTransfer.planImport(cur.accounts, parsed.accounts)) };
+});
+handle('accounts:import-apply', async (token, mode) => {
+  const p = pendingImport;
+  // Jeton unique : un second appel (ou un appel sans choix de fichier) est refusé.
+  if (!p || typeof token !== 'string' || token !== p.token) return { ok: false, error: 'no_pending_import' };
+  if (!accountsTransfer.MODES.includes(mode)) return { ok: false, error: 'mode invalide' };
+  pendingImport = null;
+  const res = await accountsStore.importAccounts(p.accounts, mode);
+  if (res.ok) rememberStorageState({ status: 'ok', accounts: res.accounts, encrypted: res.encrypted });
+  return res;
+});
+handle('accounts:import-cancel', () => { pendingImport = null; return true; });
 
 // Retour arrière de la migration (lancement avec --revert-storage-migration).
 handle('storage:pending-revert', () => accountsStore.pendingRevert());

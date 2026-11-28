@@ -26,7 +26,14 @@ contextBridge.exposeInMainWorld('ovcr', {
     load: invoke('accounts:load'),
     save: invoke('accounts:save'),
     restoreBackup: invoke('accounts:restore-backup'),
-    migrateLegacy: invoke('accounts:migrate-legacy')
+    migrateLegacy: invoke('accounts:migrate-legacy'),
+    // Export / import (boîtes de dialogue ouvertes par le main ; aucun chemin
+    // ne transite par l'interface). importPick renvoie un résumé et un jeton,
+    // importApply(jeton, 'skip' | 'replace' | 'copy') applique le choix.
+    exportToFile: invoke('accounts:export'),
+    importPick: invoke('accounts:import-pick'),
+    importApply: invoke('accounts:import-apply'),
+    importCancel: invoke('accounts:import-cancel')
   },
   storage: {
     pendingRevert: invoke('storage:pending-revert'),

@@ -14,7 +14,7 @@ scenario('Démarrage et sécurité (profil vide)', {}, async ({ win, js, check, 
   const api = await js(`JSON.stringify(Object.fromEntries(Object.entries(window.ovcr).map(([k, v]) => [k, Object.keys(v).sort()])))`);
   check('API window.ovcr exposée (liste fermée, une méthode par opération)', api === JSON.stringify({
     files: ['listDirectory', 'readFile', 'saveFile', 'selectFolder'],
-    accounts: ['load', 'migrateLegacy', 'restoreBackup', 'save'],
+    accounts: ['exportToFile', 'importApply', 'importCancel', 'importPick', 'load', 'migrateLegacy', 'restoreBackup', 'save'],
     storage: ['confirmRevert', 'pendingRevert'],
     sitePermissions: ['reset'],
     services: ['openInBrowser'],
