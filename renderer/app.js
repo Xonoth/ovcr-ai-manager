@@ -7,88 +7,13 @@
 // processus principal. Script externe (et non inline) pour que la CSP de
 // index.html puisse interdire tout script inline.
 
-// Échappe les caractères HTML dangereux (chantier A). À utiliser PARTOUT où une
-// donnée saisie par l'utilisateur (nom / email / profil de compte, nom de
-// fichier) est injectée dans du HTML via innerHTML. Empêche l'exécution de
-// HTML/JS injecté (un simple nom de compte « <img onerror> » vaudrait sinon
-// exécution de code dans l'interface — la CSP bloquerait ce script inline,
-// mais on ne compte pas sur une seule barrière).
-function escapeHtml(value) {
-  return String(value == null ? '' : value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Filet de sécurité (chantier audit 3.6) : si assets/icons.js n'a pas pu se
-// charger, `hydrateIcons` serait absente et le 1er appel dans initApp() ferait
-// planter TOUTE l'app. On garantit une fonction no-op -> au pire, pas d'icônes,
-// mais l'app reste utilisable.
-if (typeof window.hydrateIcons !== 'function') window.hydrateIcons = function () {};
-
-// === Diagnostics (phase 2, lot 3) ===
-// Les avertissements/erreurs de l'interface et les erreurs JavaScript non
-// interceptées partent dans le journal local du processus principal
-// (diagnostics.js : expurgé, limité en débit). Rien n'est envoyé sur Internet.
-// La console reste inchangée (même affichage dans les DevTools).
-const diag = (() => {
-  const api = window.ovcr && window.ovcr.diag;
-  const nativeError = console.error.bind(console);
-  const fmt = (a) => {
-    if (a instanceof Error) return a.name + ': ' + a.message;
-    if (typeof a === 'string') return a;
-    try { return JSON.stringify(a); } catch (_) { return String(a); }
-  };
-  function report(level, message, stack) {
-    if (!api) return;
-    // Jamais console.error ici (boucle) : on retombe sur la console native.
-    api.report({ level, message: String(message).slice(0, 2000), stack: stack ? String(stack).slice(0, 4000) : undefined })
-      .catch(e => nativeError('[diag] rapport impossible :', e && e.message));
-  }
-  for (const level of ['warn', 'error']) {
-    const native = console[level].bind(console);
-    console[level] = (...args) => { native(...args); report(level, args.map(fmt).join(' ')); };
-  }
-  // Erreur visible pour l'utilisateur : une fois toutes les 10 s au plus.
-  let lastNotice = 0;
-  function notice() {
-    if (Date.now() - lastNotice < 10000 || typeof window.__ovcrToast !== 'function') return;
-    lastNotice = Date.now();
-    window.__ovcrToast('Une erreur interne est survenue (détails : « ? » puis « Diagnostic »).', 'error');
-  }
-  window.addEventListener('error', (e) => {
-    report('error', 'erreur non interceptée : ' + (e.message || 'inconnue') + (e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : ''), e.error && e.error.stack);
-    notice();
-  });
-  window.addEventListener('unhandledrejection', (e) => {
-    const r = e.reason;
-    report('error', 'promesse rejetée non traitée : ' + (r && r.message || r), r && r.stack);
-    notice();
-  });
-  return { report };
-})();
-
-// Écran affiché si le démarrage échoue en cours de route : jamais une
-// interface à moitié construite et muette.
-function showStartupError(err) {
-  diag.report('error', '[app] démarrage impossible : ' + (err && err.message || err), err && err.stack);
-  const box = document.createElement('div');
-  box.className = 'modal-overlay open';
-  box.style.zIndex = '300';
-  box.innerHTML = '<div class="modal"><div class="modal__title">L\'application n\'a pas pu démarrer</div>'
-    + '<div style="color:var(--fg-muted); font-size:13px; margin:8px 0 4px;">Une erreur interne a interrompu le démarrage. Vos comptes ne sont pas modifiés. '
-    + 'Essayez de recharger ; si le problème continue, les détails techniques sont dans le dossier des journaux.</div>'
-    + '<div class="modal__actions"><button class="btn" data-startup="logs">Ouvrir le dossier des journaux</button>'
-    + '<button class="btn btn--primary" data-startup="reload">Recharger</button></div></div>';
-  box.addEventListener('click', (e) => {
-    const action = e.target.closest('[data-startup]');
-    if (!action) return;
-    if (action.getAttribute('data-startup') === 'reload') location.reload();
-    else if (window.ovcr && window.ovcr.diag) window.ovcr.diag.openLogs().catch(e => console.warn('[diag] dossier des journaux :', e && e.message));
-  });
-  document.body.appendChild(box);
+// Socle de l'interface (renderer/core.js, chargé juste avant ce script) :
+// espace de noms window.OVCR (état partagé, escapeHtml, showToast,
+// diagnostics, écran d'échec du démarrage). Absent (installation abîmée) :
+// message explicite plutôt qu'une interface muette.
+if (typeof OVCR === 'undefined') {
+  document.body.innerHTML = '<div style="margin:auto; padding:32px; color:#ff4d6a; font-family:sans-serif;">Erreur interne : le fichier renderer/core.js n\'est pas chargé. Réinstallez l\'application.</div>';
+  throw new Error('renderer/core.js non chargé');
 }
 
 // === Démarrage ===
@@ -110,7 +35,7 @@ function ensureMonacoLoaded() {
 }
 initApp().catch(err => {
   console.error('[app] démarrage :', err);
-  showStartupError(err);
+  OVCR.showStartupError(err);
 });
 
 // Monaco en mode NAVIGATEUR : le loader AMD (loader.js) n'est injecté qu'au
@@ -161,6 +86,10 @@ function onMonacoUnavailable() {
 }
 
 async function initApp() {
+  const { escapeHtml, showToast } = OVCR;
+  // État partagé (renderer/core.js) : comptes, mode protégé, panneaux…
+  const state = OVCR.state;
+
   // Pont vers le processus principal (app-preload.js). S'il manque, l'app ne
   // peut ni lire ni enregistrer les comptes : on le dit au lieu d'échouer en
   // silence (et surtout sans rien écraser).
@@ -259,10 +188,9 @@ async function initApp() {
   // comptes en échec) : enregistrer la liste vide affichée écraserait les vrais
   // comptes (audit phase 2, C2). Un échec d'enregistrement laisse un bandeau
   // persistant (et non un simple toast de 3 s) avec « Réessayer » (M5).
-  let storageWritable = true;
   let saveSeq = 0;
   function saveAccounts(list) {
-    if (!storageWritable) {
+    if (!state.storageWritable) {
       console.warn('[storage] écriture ignorée : comptes non chargés');
       return false;
     }
@@ -278,7 +206,7 @@ async function initApp() {
         showStorageBanner('save-failed',
           'Le dernier enregistrement des comptes a échoué' + (detail && typeof detail === 'string' ? ' (' + detail + ')' : '')
           + ' : vos dernières modifications ne sont pas encore sauvegardées.',
-          'Réessayer', () => saveAccounts(accounts));
+          'Réessayer', () => saveAccounts(state.accounts));
       }
     };
     api.accounts.save(snapshot)
@@ -292,17 +220,16 @@ async function initApp() {
 
   // Refuse une modification (avec explication) si le stockage n'est pas sûr.
   function ensureWritable() {
-    if (storageWritable) return true;
+    if (state.storageWritable) return true;
     const why = {
       newer: 'comptes enregistrés par une version plus récente (lecture seule)',
       migration_failed: 'mise à jour du format des comptes non aboutie (lecture seule)'
-    }[bannerKind] || 'comptes non chargés, utilisez « Réessayer »';
+    }[state.bannerKind] || 'comptes non chargés, utilisez « Réessayer »';
     showToast('Modification impossible pour ne rien écraser : ' + why + '.', 'error');
     return false;
   }
 
   // Bandeau d'alerte persistant (un seul à la fois ; id = nature du problème).
-  let bannerKind = null;
   function showStorageBanner(kind, message, actionLabel, action) {
     let el = document.getElementById('storageBanner');
     if (!el) {
@@ -312,7 +239,7 @@ async function initApp() {
       el.setAttribute('role', 'alert');
       document.body.appendChild(el);
     }
-    bannerKind = kind;
+    state.bannerKind = kind;
     el.textContent = '';
     const text = document.createElement('span');
     text.textContent = message; // textContent : aucune interprétation HTML
@@ -328,7 +255,7 @@ async function initApp() {
   }
   function hideStorageBanner(kind) {
     const el = document.getElementById('storageBanner');
-    if (el && (!kind || bannerKind === kind)) { el.hidden = true; bannerKind = null; }
+    if (el && (!kind || state.bannerKind === kind)) { el.hidden = true; state.bannerKind = null; }
   }
 
   // Copie de secours lue directement (migration impossible) : jamais validée
@@ -349,17 +276,17 @@ async function initApp() {
   // Fondation réutilisable pour une future fonctionnalité d'export/import JSON
   // (ne pas coder le backup « en dur » : ces deux fonctions serviront à l'UI).
   // eslint-disable-next-line no-unused-vars -- fondation documentée pour une future UI d'export
-  function exportAccountsJSON() { return JSON.stringify(accounts, null, 2); }
+  function exportAccountsJSON() { return JSON.stringify(state.accounts, null, 2); }
   // eslint-disable-next-line no-unused-vars -- fondation documentée pour une future UI d'import
   function importAccountsJSON(text) {
-    if (!storageWritable) throw new Error('Comptes non chargés : import impossible.');
+    if (!state.storageWritable) throw new Error('Comptes non chargés : import impossible.');
     const parsed = JSON.parse(text); // peut throw : l'appelant (UI) gère l'erreur
     if (!Array.isArray(parsed)) throw new Error('Format invalide : un tableau de comptes est attendu.');
-    accounts = parsed;
+    state.accounts = parsed;
     migrateOldAccounts();  // complète/répare les comptes importés
-    saveAccounts(accounts);
+    saveAccounts(state.accounts);
     renderAccounts();
-    return accounts.length;
+    return state.accounts.length;
   }
 
   // Retour arrière demandé (lancement avec --revert-storage-migration) : on
@@ -387,13 +314,10 @@ async function initApp() {
 
   // Chargement initial tolérant : l'app ne plante JAMAIS au démarrage, même si
   // les comptes sont illisibles (le cas échéant on propose la restauration plus bas).
-  let dataCorrupt = false;
-  let loadResult = null;
-  let accounts = [];
   try {
-    loadResult = await api.accounts.load();
+    state.loadResult = await api.accounts.load();
     // Premier lancement après la 1.0.4 : migration depuis le localStorage.
-    if (loadResult.status === 'empty') {
+    if (state.loadResult.status === 'empty') {
       const legacy = legacyGet(LEGACY_STORE_KEY);
       const legacyBackup = legacyGet(LEGACY_BACKUP_KEY);
       if (legacy != null || legacyBackup != null) {
@@ -404,7 +328,7 @@ async function initApp() {
           try { localStorage.removeItem(LEGACY_STORE_KEY); localStorage.removeItem(LEGACY_BACKUP_KEY); }
           catch (e) { console.warn('[storage] ancienne copie en clair non effacée (sera ignorée) :', e.message); }
           console.log('[storage] comptes migrés depuis localStorage (chiffrement : ' + m.encrypted + ')');
-          loadResult = await api.accounts.load();
+          state.loadResult = await api.accounts.load();
         } else {
           // Migration impossible : on travaille sur l'ancienne copie (non
           // effacée) ; la prochaine écriture créera le nouveau stockage.
@@ -413,11 +337,11 @@ async function initApp() {
           let list = null;
           try { list = normalizeLegacyList(JSON.parse(legacy)); }
           catch (e) { console.warn('[storage] ancienne copie illisible, liste vide (rien n\'est écrasé) :', e.message); }
-          if (list) loadResult = { status: 'ok', accounts: list };
+          if (list) state.loadResult = { status: 'ok', accounts: list };
         }
       }
     }
-    applyLoadResult(loadResult);
+    applyLoadResult(state.loadResult);
   } catch (e) {
     console.error('[storage] lecture des comptes impossible :', e);
     applyLoadResult(null);
@@ -427,36 +351,36 @@ async function initApp() {
   // (exception IPC, réponse inattendue) passe en mode protégé : liste vide
   // affichée MAIS écritures bloquées, bandeau avec « Réessayer ».
   function applyLoadResult(res) {
-    loadResult = res;
-    dataCorrupt = false;
+    state.loadResult = res;
+    state.dataCorrupt = false;
     const status = res && res.status;
     if (status === 'ok' && Array.isArray(res.accounts)) {
-      accounts = res.accounts;
-      storageWritable = true;
+      state.accounts = res.accounts;
+      state.storageWritable = true;
       if (res.migrated) console.log(`[storage] données mises à jour (schéma ${res.migrated.from} -> ${res.migrated.to}), sauvegarde : ${res.migrated.backupFile}`);
     } else if ((status === 'newer' || status === 'migration_failed') && Array.isArray(res.accounts)) {
       // Comptes affichés et utilisables (ouvrir un service), mais JAMAIS
       // réécrits : données d'une version plus récente de l'app, ou mise à
       // jour des données qui n'a pas abouti (données d'origine intactes).
-      accounts = res.accounts;
-      storageWritable = false;
+      state.accounts = res.accounts;
+      state.storageWritable = false;
       showStorageBanner(status,
         status === 'newer'
           ? 'Ces comptes ont été enregistrés par une version plus récente de l\'application. Lecture seule : mettez l\'application à jour pour les modifier.'
           : 'La mise à jour du format des comptes a échoué. Vos données d\'origine sont intactes ; l\'application les affiche en lecture seule.');
     } else if (status === 'empty') {
-      accounts = [];
-      storageWritable = true;
+      state.accounts = [];
+      state.storageWritable = true;
     } else if (status === 'corrupt' || status === 'undecryptable' || status === 'missing') {
       // État connu : l'utilisateur choisit (restaurer ou continuer). Les
       // écritures restent possibles : le main met de côté le fichier illisible
       // et une copie de la sauvegarde avant toute rotation.
-      accounts = [];
-      dataCorrupt = true;
-      storageWritable = true;
+      state.accounts = [];
+      state.dataCorrupt = true;
+      state.storageWritable = true;
     } else {
-      accounts = [];
-      storageWritable = false;
+      state.accounts = [];
+      state.storageWritable = false;
       showStorageBanner('load-failed',
         'Les comptes n\'ont pas pu être chargés. Les modifications sont désactivées pour ne rien écraser.',
         'Réessayer', retryLoadAccounts);
@@ -468,11 +392,11 @@ async function initApp() {
     try { res = await api.accounts.load(); }
     catch (e) { console.error('[storage] nouvelle lecture impossible :', e); }
     applyLoadResult(res);
-    if (!storageWritable) { showToast('Toujours impossible de charger les comptes.', 'error'); return; }
+    if (!state.storageWritable) { showToast('Toujours impossible de charger les comptes.', 'error'); return; }
     hideStorageBanner('load-failed');
     migrateOldAccounts();
     renderAccounts();
-    if (dataCorrupt) showRecoveryUI();
+    if (state.dataCorrupt) showRecoveryUI();
     else showToast('Comptes chargés');
   }
 
@@ -523,23 +447,22 @@ async function initApp() {
   // Vue compacte : ids des comptes dont la grille de services est repliée.
   // Une valeur absente/illisible retombe sur le défaut = tout déplié.
   const COLLAPSED_KEY = 'collapsed_accounts';
-  let collapsedAccounts = new Set();
   try {
     const saved = JSON.parse(prefs.get(COLLAPSED_KEY) || '[]');
-    if (Array.isArray(saved)) collapsedAccounts = new Set(saved.filter(x => typeof x === 'string'));
+    if (Array.isArray(saved)) state.collapsedAccounts = new Set(saved.filter(x => typeof x === 'string'));
   } catch (e) { console.warn('[prefs] états de repli ignorés :', e.message); }
 
   // Écrit l'état de repli en purgeant les ids de comptes supprimés
   // (la clé ne grossit pas indéfiniment au fil des suppressions).
   function saveCollapsed() {
-    collapsedAccounts = new Set([...collapsedAccounts].filter(id => accounts.some(a => a.id === id)));
-    prefs.set(COLLAPSED_KEY, JSON.stringify([...collapsedAccounts]));
+    state.collapsedAccounts = new Set([...state.collapsedAccounts].filter(id => state.accounts.some(a => a.id === id)));
+    prefs.set(COLLAPSED_KEY, JSON.stringify([...state.collapsedAccounts]));
   }
 
   window.toggleCardCollapse = function(accId) {
-    if (!accounts.some(a => a.id === accId)) return; // garde : id obsolète
-    if (collapsedAccounts.has(accId)) collapsedAccounts.delete(accId);
-    else collapsedAccounts.add(accId);
+    if (!state.accounts.some(a => a.id === accId)) return; // garde : id obsolète
+    if (state.collapsedAccounts.has(accId)) state.collapsedAccounts.delete(accId);
+    else state.collapsedAccounts.add(accId);
     saveCollapsed();
     renderAccounts();
   }
@@ -547,17 +470,14 @@ async function initApp() {
   // Bascule globale : s'il reste au moins une carte dépliée on replie tout,
   // sinon on déplie tout. Idempotent sur les cartes déjà dans l'état cible.
   window.toggleAllCards = function() {
-    if (accounts.length === 0) return;
-    const anyExpanded = accounts.some(a => !collapsedAccounts.has(a.id));
-    if (anyExpanded) accounts.forEach(a => collapsedAccounts.add(a.id));
-    else collapsedAccounts.clear();
+    if (state.accounts.length === 0) return;
+    const anyExpanded = state.accounts.some(a => !state.collapsedAccounts.has(a.id));
+    if (anyExpanded) state.accounts.forEach(a => state.collapsedAccounts.add(a.id));
+    else state.collapsedAccounts.clear();
     saveCollapsed();
     renderAccounts();
   }
 
-  let activeAccountId = null;
-  let activePaneId = 1;
-  let layoutMode = 1;
   let monacoEditor = null;
   let fallbackTextarea = null;
   let editorMode = 'none'; // 'monaco' | 'textarea' | 'none'
@@ -570,7 +490,7 @@ async function initApp() {
   function migrateOldAccounts() {
     let needsUpdate = false;
     const ALL_SERVICES = SERVICES.map(s => s.id);
-    accounts.forEach(acc => {
+    state.accounts.forEach(acc => {
       if (!Array.isArray(acc.services)) { acc.services = [...ALL_SERVICES]; needsUpdate = true; }
       if (acc.quotas && !acc.cooldowns) { delete acc.quotas; needsUpdate = true; }
       if (!acc.cooldowns) { acc.cooldowns = {}; needsUpdate = true; }
@@ -583,8 +503,8 @@ async function initApp() {
     // refuse alors d'enregistrer TOUTE la liste, et ce compte ne pouvait de
     // toute façon ouvrir aucun service (partition « persist: » vide refusée).
     // On lui attribue le premier profil libre, et on le dit (audit phase 2).
-    const used = new Set(accounts.map(a => a.profile));
-    accounts.forEach(acc => {
+    const used = new Set(state.accounts.map(a => a.profile));
+    state.accounts.forEach(acc => {
       const p = typeof acc.profile === 'string' ? acc.profile : '';
       if (p && p.length <= 200 && !/[\u0000-\u001f\u007f]/.test(p)) return;
       let n = 1;
@@ -595,7 +515,7 @@ async function initApp() {
       console.warn('[storage] profil invalide remplacé pour le compte', acc.id);
       showToast(`Le compte « ${acc.name} » n'avait pas de profil valide : « ${acc.profile} » lui a été attribué.`, 'warning');
     });
-    if (needsUpdate) saveAccounts(accounts);
+    if (needsUpdate) saveAccounts(state.accounts);
   }
   migrateOldAccounts();
 
@@ -692,7 +612,7 @@ async function initApp() {
   // Rendu
   function renderAccounts() {
     const container = document.getElementById('accountsList');
-    if (accounts.length === 0) {
+    if (state.accounts.length === 0) {
       // État vide : appel à l'action pour créer un premier compte. Le bouton
       // porte data-action="add" -> géré par la délégation (aucun onclick, aucune
       // donnée utilisateur ici de toute façon).
@@ -706,14 +626,14 @@ async function initApp() {
       return;
     }
 
-    container.innerHTML = accounts.map((acc, idx) => {
+    container.innerHTML = state.accounts.map((acc, idx) => {
       // Toute donnée issue du compte (nom, email, profil, couleur) est saisie
       // par l'utilisateur -> échappée avant injection (chantier A).
       const initials = escapeHtml(String(acc.name).slice(0, 2).toUpperCase());
       const color = escapeHtml(acc.color || COLORS[idx % COLORS.length]);
       const id = escapeHtml(acc.id);
-      const isActive = acc.id === activeAccountId;
-      const isCollapsed = collapsedAccounts.has(acc.id);
+      const isActive = acc.id === state.activeAccountId;
+      const isCollapsed = state.collapsedAccounts.has(acc.id);
       // Résumé « N/9 » de la carte repliée : même test que updateStats
       // (renderer/cooldowns.js) -> toujours synchro avec le tick des cooldowns.
       const now = Date.now();
@@ -772,7 +692,7 @@ async function initApp() {
   function updateStats() {
     let activeAccounts = 0, availableIAs = 0;
     const now = Date.now();
-    accounts.forEach(acc => {
+    state.accounts.forEach(acc => {
       let hasAvailable = false;
       acc.services.forEach(sid => {
         if (CD.isAvailable(acc.cooldowns[sid], now)) { availableIAs++; hasAvailable = true; }
@@ -784,7 +704,7 @@ async function initApp() {
     // Oriente le chevron du bouton « Tout replier / déplier » selon l'état
     // global (appelé dans les deux branches de renderAccounts, y c. liste vide).
     const allBtn = document.getElementById('btnToggleAllCards');
-    if (allBtn) allBtn.classList.toggle('all-collapsed', accounts.length > 0 && accounts.every(a => collapsedAccounts.has(a.id)));
+    if (allBtn) allBtn.classList.toggle('all-collapsed', state.accounts.length > 0 && state.accounts.every(a => state.collapsedAccounts.has(a.id)));
   }
 
   // Annulation d'un cooldown actif (ou incohérent) en DEUX clics : le 1er arme
@@ -796,7 +716,7 @@ async function initApp() {
 
   // Layout
   window.setLayout = function(mode, btn) {
-    layoutMode = mode;
+    state.layoutMode = mode;
     document.querySelectorAll('.workspace-header .btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const pane2 = document.getElementById('pane2');
@@ -807,7 +727,7 @@ async function initApp() {
       if (resizerPane) resizerPane.style.display = 'block';
     } else {
       pane2.classList.remove('active');
-      activePaneId = 1;
+      state.activePaneId = 1;
       if (resizerPane) resizerPane.style.display = 'none';
       if (pane1) pane1.style.flex = '1'; // on rend toute la largeur au panneau unique
     }
@@ -829,32 +749,32 @@ async function initApp() {
   }
 
   window.openService = function(accId, svcId) {
-    const acc = accounts.find(a => a.id === accId);
+    const acc = state.accounts.find(a => a.id === accId);
     const svc = SERVICES.find(s => s.id === svcId);
     if (!acc || !svc) return;
 
-    activeAccountId = accId;
+    state.activeAccountId = accId;
     // Ouvrir un service (carte OU palette Ctrl+K) déplie la carte concernée :
     // confirmation visuelle du compte utilisé même si elle était repliée.
-    if (collapsedAccounts.has(accId)) { collapsedAccounts.delete(accId); saveCollapsed(); }
+    if (state.collapsedAccounts.has(accId)) { state.collapsedAccounts.delete(accId); saveCollapsed(); }
     renderAccounts();
 
     // Vue scindée : un panneau VIDE est toujours servi en priorité (cas
     // typique : panneau 2 fermé via « Fermer le panneau 2 » -> le prochain
     // service le remplit au lieu d'écraser le panneau 1). Quand les deux
     // panneaux sont occupés, l'alternance habituelle continue.
-    if (layoutMode === 2) {
+    if (state.layoutMode === 2) {
       const p1Full = !!document.querySelector('#pane1 webview');
       const p2Full = !!document.querySelector('#pane2 webview');
-      if (p1Full && !p2Full) activePaneId = 2;
-      else if (!p1Full && p2Full) activePaneId = 1;
+      if (p1Full && !p2Full) state.activePaneId = 2;
+      else if (!p1Full && p2Full) state.activePaneId = 1;
     }
 
-    const pane = document.getElementById(`pane${activePaneId}`);
+    const pane = document.getElementById(`pane${state.activePaneId}`);
     mountService(pane, acc, svc);
 
-    if (layoutMode === 2) {
-      activePaneId = activePaneId === 1 ? 2 : 1;
+    if (state.layoutMode === 2) {
+      state.activePaneId = state.activePaneId === 1 ? 2 : 1;
     }
     updateClosePane2Btn();
     showToast(`${svc.name} ouvert avec ${acc.name}`);
@@ -1132,7 +1052,7 @@ async function initApp() {
     const query = document.getElementById('paletteInput').value.toLowerCase();
     const results = document.getElementById('paletteResults');
     let items = [];
-    accounts.forEach(acc => {
+    state.accounts.forEach(acc => {
       if (acc.name.toLowerCase().includes(query) || acc.email.toLowerCase().includes(query)) {
         acc.services.forEach(sid => {
           const svc = SERVICES.find(s => s.id === sid);
@@ -1153,7 +1073,7 @@ async function initApp() {
     const modal = document.getElementById('accountModal');
     const title = document.getElementById('modalTitle');
     const profileInput = document.getElementById('inputProfile');
-    const acc = accId ? accounts.find(a => a.id === accId) : null;
+    const acc = accId ? state.accounts.find(a => a.id === accId) : null;
     if (accId && !acc) return; // garde : id obsolète
     if (acc) {
       title.textContent = "Modifier le compte";
@@ -1170,8 +1090,8 @@ async function initApp() {
       document.getElementById('inputEmail').value = '';
       // Suggère un profil NON collisionnant (`length+1` pouvait re-proposer un
       // profil déjà pris après une suppression -> sessions partagées).
-      const used = new Set(accounts.map(a => a.profile));
-      let n = accounts.length + 1;
+      const used = new Set(state.accounts.map(a => a.profile));
+      let n = state.accounts.length + 1;
       while (used.has('profil_' + n)) n++;
       document.getElementById('inputProfile').value = 'profil_' + n;
     }
@@ -1232,10 +1152,10 @@ async function initApp() {
     lines.push(s
       ? `Stockage : ${s.status}${s.accounts !== undefined ? ', ' + s.accounts + ' compte(s)' : ''}${s.encrypted === false ? ', NON chiffré' : s.encrypted ? ', chiffré' : ''}${s.migrated ? ', migré ' + s.migrated : ''}${s.backupAvailable !== undefined ? ', sauvegarde ' + (s.backupAvailable ? 'disponible' : 'absente') : ''}`
       : 'Stockage : état inconnu');
-    lines.push(`Écriture des comptes : ${storageWritable ? 'possible' : 'bloquée (' + (bannerKind || 'inconnu') + ')'}`);
+    lines.push(`Écriture des comptes : ${state.storageWritable ? 'possible' : 'bloquée (' + (state.bannerKind || 'inconnu') + ')'}`);
     lines.push(`Mémoire totale : ${d.memory.totalMb} Mo`);
     for (const [type, m] of Object.entries(d.memory.byType)) lines.push(`  ${type} : ${m.count} processus, ${m.mb} Mo`);
-    lines.push(`Panneaux : ${document.querySelectorAll('#webviewArea webview').length} ouvert(s), vue ${layoutMode === 2 ? 'scindée' : 'simple'}`);
+    lines.push(`Panneaux : ${document.querySelectorAll('#webviewArea webview').length} ouvert(s), vue ${state.layoutMode === 2 ? 'scindée' : 'simple'}`);
     lines.push('', 'Derniers événements :');
     for (const e of d.recent) lines.push(`${e.t.slice(11, 19)} ${e.level.toUpperCase()} [${e.source}] ${e.message}`);
     return lines.join('\n');
@@ -1277,7 +1197,7 @@ async function initApp() {
 
   // Suppression de compte
   window.openDeleteModal = function(accId) {
-    const acc = accounts.find(a => a.id === accId);
+    const acc = state.accounts.find(a => a.id === accId);
     if (!acc) return;
     document.getElementById('deleteId').value = accId;
     document.getElementById('deleteDesc').textContent =
@@ -1288,10 +1208,10 @@ async function initApp() {
   window.confirmDelete = function() {
     if (!ensureWritable()) return;
     const id = document.getElementById('deleteId').value;
-    accounts = accounts.filter(a => a.id !== id);
-    if (activeAccountId === id) activeAccountId = null;
+    state.accounts = state.accounts.filter(a => a.id !== id);
+    if (state.activeAccountId === id) state.activeAccountId = null;
     saveCollapsed();        // purge l'état de repli du compte supprimé
-    saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
+    saveAccounts(state.accounts); // écrit + backup de la génération précédente (chantier C)
     renderAccounts();
     closeDeleteModal();
     showToast('Compte supprimé');
@@ -1308,31 +1228,31 @@ async function initApp() {
     // Unicité du profil (chantier audit 3.1) : deux comptes partageant le même
     // `profile` utiliseraient la MÊME partition Electron (persist:<profile>) →
     // cookies/sessions mêlés entre comptes. On refuse la collision.
-    if (accounts.some(a => a.id !== id && a.profile === profile)) {
+    if (state.accounts.some(a => a.id !== id && a.profile === profile)) {
       return showToast('Ce profil est déjà utilisé par un autre compte (les sessions seraient partagées).', 'error');
     }
 
     if (id) {
-      const acc = accounts.find(a => a.id === id);
+      const acc = state.accounts.find(a => a.id === id);
       if (!acc) return; // garde : id obsolète
       Object.assign(acc, { name, email, profile });
       showToast('Compte mis à jour');
     } else {
-      accounts.push({
+      state.accounts.push({
         id: 'acc_' + Date.now(), name, email, profile,
-        color: COLORS[accounts.length % COLORS.length],
+        color: COLORS[state.accounts.length % COLORS.length],
         services: SERVICES.map(s => s.id),
         cooldowns: Object.fromEntries(SERVICES.map(s => [s.id, 0]))
       });
       showToast('Compte ajouté');
     }
-    saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
+    saveAccounts(state.accounts); // écrit + backup de la génération précédente (chantier C)
     renderAccounts();
     closeModal();
   }
 
   window.toggleCooldown = function(accId, svcId) {
-    const acc = accounts.find(a => a.id === accId);
+    const acc = state.accounts.find(a => a.id === accId);
     if (!acc) return; // garde : id obsolète (chantier audit 3.7)
     if (!ensureWritable()) return;
     const now = Date.now();
@@ -1353,20 +1273,8 @@ async function initApp() {
       // Non suivi ou terminé : marqué épuisé, rappel dans 24 h.
       acc.cooldowns[svcId] = CD.newEnd(now);
     }
-    saveAccounts(accounts); // écrit + backup de la génération précédente (chantier C)
+    saveAccounts(state.accounts); // écrit + backup de la génération précédente (chantier C)
     renderAccounts();
-  }
-
-  function showToast(msg, type = 'success') {
-    const toast = document.createElement('div');
-    toast.className = `toast`;
-    toast.style.borderLeftColor = type === 'error' ? 'var(--danger)' : type === 'warning' ? 'var(--warning)' : 'var(--accent)';
-    const iconName = type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'exclamation-triangle';
-    // msg peut contenir une donnée utilisateur (ex. nom de compte) -> échappé (chantier A).
-    toast.innerHTML = `<span class="ic" data-icon="${iconName}"></span> ${escapeHtml(msg)}`;
-    hydrateIcons(toast);
-    document.getElementById('toastContainer').appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(100%)'; setTimeout(() => toast.remove(), 300); }, 3000);
   }
 
   // Colonnes redimensionnables à la souris
@@ -1521,7 +1429,7 @@ async function initApp() {
     const now = Date.now();
     document.querySelectorAll('#accountsList [data-action="toggle-cooldown"]').forEach(btn => {
       const accId = btn.getAttribute('data-acc'), svcId = btn.getAttribute('data-svc');
-      const acc = accounts.find(a => a.id === accId);
+      const acc = state.accounts.find(a => a.id === accId);
       if (!acc || isResetPending(accId, svcId)) return;
       const v = CD.view(acc.cooldowns[svcId], now);
       if (v.state !== btn.getAttribute('data-cd-state')) return; // changement d'état : rendu complet au tick
@@ -1539,10 +1447,10 @@ async function initApp() {
   //     moins cher qu'un rendu complet.
   // Coût d'un tick sans changement : calcul de la signature des états (µs).
   let lastCdMinute = Math.floor(Date.now() / 60000);
-  let lastCdSignature = CD.signature(accounts, Date.now());
+  let lastCdSignature = CD.signature(state.accounts, Date.now());
   setInterval(() => {
     const now = Date.now();
-    const sig = CD.signature(accounts, now);
+    const sig = CD.signature(state.accounts, now);
     const minute = Math.floor(now / 60000);
     if (sig !== lastCdSignature) renderAccounts();
     else if (minute !== lastCdMinute) refreshCooldownLabels();
@@ -1558,7 +1466,7 @@ async function initApp() {
   (() => {
     const now = Date.now();
     let inconsistent = 0, active = 0;
-    accounts.forEach(acc => Object.values(acc.cooldowns || {}).forEach(end => {
+    state.accounts.forEach(acc => Object.values(acc.cooldowns || {}).forEach(end => {
       const s = CD.state(end, now);
       if (s === 'inconsistent') inconsistent++;
       else if (s === 'active') active++;
@@ -1570,18 +1478,18 @@ async function initApp() {
   // Récupération des données (chantier C) : si ai_accounts était illisible au
   // démarrage, on propose de restaurer la sauvegarde plutôt que de perdre en
   // silence les comptes de l'utilisateur.
-  if (dataCorrupt) showRecoveryUI();
+  if (state.dataCorrupt) showRecoveryUI();
 
   // Construit et affiche la modale de récupération. Restaure depuis
   // ai_accounts_backup si un backup valide existe, sinon informe simplement.
   // (Fonction déclarée -> hoistée, l'appel ci-dessus la voit.)
   function showRecoveryUI() {
     // État de la sauvegarde (accounts.json.bak), fourni par le processus principal.
-    const backup = (loadResult && loadResult.backup) || { available: false, count: 0 };
+    const backup = (state.loadResult && state.loadResult.backup) || { available: false, count: 0 };
     const hasBackup = !!backup.available;
     // « undecryptable » : fichier chiffré par un autre compte Windows, ou clé
     // DPAPI perdue (mot de passe Windows réinitialisé par un administrateur…).
-    const status = loadResult && loadResult.status;
+    const status = state.loadResult && state.loadResult.status;
     const why = status === 'undecryptable'
       ? 'ne peut pas être déchiffrée sur ce compte Windows'
       : status === 'missing' ? 'est introuvable' : 'est corrompue';

@@ -50,6 +50,8 @@ module.exports = [
       sourceType: 'script',
       globals: {
         ...globals.browser, monaco: 'readonly', module: 'readonly', globalThis: 'readonly',
+        // Espace de noms partagé par les scripts de l'interface (renderer/core.js).
+        OVCR: 'readonly',
         ...Object.fromEntries([
           'hydrateIcons', 'openModal', 'closeModal', 'saveAccount', 'openDeleteModal', 'closeDeleteModal',
           'confirmDelete', 'openService', 'toggleCooldown', 'toggleCardCollapse', 'toggleAllCards',

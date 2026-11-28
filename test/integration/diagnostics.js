@@ -2,10 +2,11 @@
 
 const path = require('path');
 const fs = require('fs');
+const { session } = require('electron');
 const { scenario } = require('./harness');
 const diagnostics = require('../../diagnostics');
 
-scenario('Diagnostics : journal expurgé, erreurs de l\'interface, section Diagnostic', {}, async ({ js, check, userData, waitFor, delay }) => {
+scenario('Diagnostics : journal expurgé, erreurs de l\'interface, section Diagnostic', {}, async ({ win, js, check, userData, waitFor, delay }) => {
   const logFile = path.join(userData, 'logs', 'ovcr.log');
   const readLog = async () => { await diagnostics.whenFlushed(); return fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : ''; };
 
@@ -42,8 +43,17 @@ scenario('Diagnostics : journal expurgé, erreurs de l\'interface, section Diagn
 
   // Écran d'erreur de démarrage (composant appelé directement : le
   // déclenchement réel suppose un défaut dans le code de démarrage).
-  await js(`showStartupError(new Error('démarrage-de-test')); true`);
+  await js(`OVCR.showStartupError(new Error('démarrage-de-test')); true`);
   check('écran « l\'application n\'a pas pu démarrer » affiché', await js('[...document.querySelectorAll(".modal-overlay.open .modal__title")].some(t => t.textContent.includes("pas pu démarrer"))'));
   await delay(200);
   check('échec de démarrage journalisé', /démarrage impossible : démarrage-de-test/.test(await readLog()));
+
+  // Socle renderer/core.js manquant (installation abîmée) : message explicite
+  // au lieu d'une interface vide. Le fichier est bloqué pour ce seul test.
+  session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: /\/renderer\/core\.js$/.test(d.url) }));
+  win.webContents.reload();
+  await new Promise(r => win.webContents.once('did-finish-load', r));
+  await delay(300);
+  check('core.js manquant : message « Réinstallez l\'application »', await js('/renderer\\/core\\.js n.est pas chargé/.test(document.body.textContent) && !document.getElementById("accountsList")'));
+  session.defaultSession.webRequest.onBeforeRequest(null);
 });
