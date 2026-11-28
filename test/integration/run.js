@@ -25,6 +25,8 @@ const SCENARIOS = [
   ['storage-versions.js', { OVCR_SCENARIO: 'newer' }],
   ['storage-compat.js'],
   ['storage-hard-kill.js'],
+  ['storage-revert.js', { OVCR_SCENARIO: 'revert' }],
+  ['storage-revert.js', { OVCR_SCENARIO: 'nothing' }],
   ['diagnostics.js'],
   ['webview-errors.js'],
   ['popups.js'],

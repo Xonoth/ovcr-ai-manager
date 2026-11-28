@@ -14,6 +14,8 @@
 // freshProfile : profil NEUF, sans « Local State » (par défaut, run.js en
 //                fournit un avec une clé : profil déjà utilisé, comptes
 //                chiffrés tout de suite) ;
+// waitForList  : false = ne pas attendre l'affichage de la liste des comptes
+//                (page qui ne l'affiche jamais, ex. retour arrière) ;
 // t            : { win, js, check, userData, delay, waitFor, consoleErrors, tmp }.
 
 const { app, BrowserWindow, ipcMain } = require('electron');
@@ -103,7 +105,7 @@ function scenario(name, opts, body) {
       });
       if (win.webContents.isLoading()) await new Promise(r => win.webContents.once('did-finish-load', r));
       const js = code => win.webContents.executeJavaScript(code, true);
-      await waitFor(() => js('!!document.querySelector("#accountsList > *")'), 10000, 'rendu de la liste');
+      if (opts.waitForList !== false) await waitFor(() => js('!!document.querySelector("#accountsList > *")'), 10000, 'rendu de la liste');
       await body({ win, js, check, userData, delay, waitFor, consoleErrors, tmp, app });
     } catch (err) {
       check('exception pendant le scénario', false, String(err && err.stack || err));
