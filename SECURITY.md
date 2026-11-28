@@ -7,7 +7,7 @@
 | Contexte | Contenu | Node.js | Sandbox | Accès au disque / comptes |
 |---|---|---|---|---|
 | Processus principal (`main.js` + modules) | code de l'app | oui | — | oui, **seul** à y toucher |
-| Fenêtre hôte (`index.html` + `renderer/app.js`) | interface locale | **non** | oui | uniquement via `window.ovcr` (preload), validé par le main |
+| Fenêtre hôte (`index.html` + `renderer/*.js`) | interface locale | **non** | oui | uniquement via `window.ovcr` (preload), validé par le main |
 | `<webview>` des services IA | sites distants | non | oui | aucun |
 | Popups OAuth | sites distants | non | oui | aucun |
 
@@ -38,7 +38,7 @@ font-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self';
 frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
 ```
 
-- **Aucun script inline, aucun `eval`** : tout le JS est dans des fichiers (`assets/icons.js`, `renderer/app.js`, Monaco), les boutons statiques passent par `data-cmd` au lieu de `onclick`.
+- **Aucun script inline, aucun `eval`** : tout le JS est dans des fichiers (`assets/icons.js`, `renderer/*.js`, Monaco), les boutons statiques passent par `data-cmd` au lieu de `onclick`.
 - `style-src 'unsafe-inline'` est conservé : attributs `style=""` de l'interface et balises `<style>` injectées par Monaco. Cela n'exécute aucun code.
 - Aucune connexion réseau depuis l'interface ; les `<webview>` ne sont pas des iframes et ne dépendent pas de `frame-src`.
 - Monaco tourne sans `unsafe-eval`, avec ses web workers (`worker-src 'self'`).

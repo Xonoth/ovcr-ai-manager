@@ -70,7 +70,9 @@ Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet �
 ```
 ai-manager/
 ├── index.html              # Interface : HTML + CSS + CSP
-├── renderer/app.js         # Logique de l'interface (JS vanilla, sans accès Node)
+├── renderer/core.js        # Socle de l'interface : espace de noms window.OVCR, état partagé, diagnostics
+├── renderer/*-ui.js, editor.js, layout.js, panes.js # Un script par zone de l'interface (comptes, stockage, éditeur, panneaux…)
+├── renderer/app.js         # Démarrage de l'interface (JS vanilla, sans accès Node)
 ├── renderer/cooldowns.js   # États et libellés des cooldowns (fonctions pures)
 ├── renderer/pane-errors.js # Messages d'erreur des panneaux IA (fonctions pures)
 ├── app-preload.js          # Pont minimal interface -> processus principal (window.ovcr)
@@ -95,7 +97,7 @@ ai-manager/
 └── DISTRIBUTION-LISEZ-MOI.txt # Notice utilisateur jointe au zip distribué
 ```
 
-Pas de framework, pas de bundler, pas de TypeScript : JS vanilla en scripts classiques (`index.html` + `renderer/app.js`), volontairement. `PROJECT_CONTEXT.md` contient la documentation d'architecture complète pour qui veut contribuer.
+Pas de framework, pas de bundler, pas de TypeScript : JS vanilla en scripts classiques (`index.html` + `renderer/*.js`, partagés par l'espace de noms `window.OVCR`), volontairement. `PROJECT_CONTEXT.md` contient la documentation d'architecture complète pour qui veut contribuer.
 
 ## Sécurité et limites connues
 

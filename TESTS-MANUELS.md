@@ -9,6 +9,28 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
+## Version 1.7.0 (découpage de l'interface, phase 3 P6) — validée le 28/11/2026
+
+La 1.7.0 ne change ni le format des données, ni les fuses, ni le processus
+principal : seul le code de l'interface est réparti en plusieurs fichiers
+(`renderer/`), **sans changement voulu de comportement**. Tout est couvert par
+`npm run test:electron` sur des pages locales, mais **pas** avec le vrai `.exe`,
+le vrai profil, les vraies boîtes de dialogue ni les vrais services. Le but de
+cette liste : vérifier que **rien n'a changé** à l'usage. Retour à la 1.6.0
+possible sans perte (même format de données).
+
+- [ ] **Sauvegarde** : app fermée, copier `%APPDATA%\ai-manager` ailleurs.
+- [ ] **Démarrage** : lancer le `.exe` 1.7.0 sur le vrai profil. L'app démarre, tous les comptes sont là, les cartes repliées le sont toujours, les largeurs de l'éditeur et de l'explorateur sont celles d'avant. `?` → « Diagnostic » indique **1.7.0** et « Stockage : ok, N compte(s), chiffré ». Clic droit sur le `.exe` → Propriétés → Détails : version **1.7.0**.
+- [ ] **Services** : ouvrir 2 ou 3 services déjà connectés : sessions conservées. Passer en vue scindée, ouvrir un 2e service (il va dans le panneau 2), « Fermer le panneau 2 », revenir en vue simple.
+- [ ] **Popup Google** : « Continuer avec Google » sur un service : la popup s'ouvre et la connexion aboutit comme avant.
+- [ ] **Cooldowns** : « Épuiser (24h) » sur un service (décompte affiché), puis deux clics pour l'annuler.
+- [ ] **Comptes** : ajouter un compte de test, le modifier (changer le profil affiche l'avertissement), le supprimer. Replier une carte, « Tout replier », « Tout déplier ».
+- [ ] **Palette** : Ctrl+K, taper un nom de compte, Entrée : le service s'ouvre. Échap ferme la palette.
+- [ ] **Aide** : `?` affiche les 9 fiches ; « Diagnostic », « Copier le diagnostic » puis coller dans le Bloc-notes : le texte est là ; « Ouvrir le dossier des journaux » ouvre l'Explorateur sur `logs`.
+- [ ] **Éditeur** : ouvrir le panneau éditeur (« Chargement de l'éditeur… » puis Monaco), choisir un dossier de test dans la **vraie** boîte « Choisir un dossier », ouvrir un fichier (coloration), le modifier, Ctrl+S (« Fichier enregistré ! »), vérifier le fichier sur le disque.
+- [ ] **Colonnes** : élargir l'éditeur et l'explorateur à la souris, fermer l'app, relancer : largeurs conservées.
+- [ ] (Facultatif) **Retour à la 1.6.0** : fermer, lancer la 1.6.0 sur le même profil : comptes et sessions intacts. Puis revenir à la 1.7.0.
+
 ## Version 1.6.0 (restes de l'audit, phase 3 P8) — validée le 28/11/2026
 
 La 1.6.0 ne change ni le format des données ni les fuses. Nouveautés : premier
