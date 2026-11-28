@@ -11,9 +11,13 @@
 //                pour simuler une panne) ;
 // allowDeprecated : le scénario appelle LUI-MÊME une API dépréciée (sinon,
 //                toute API dépréciée utilisée fait échouer le scénario) ;
+// freshProfile : profil NEUF, sans « Local State » (par défaut, run.js en
+//                fournit un avec une clé : profil déjà utilisé, comptes
+//                chiffrés tout de suite) ;
 // t            : { win, js, check, userData, delay, waitFor, consoleErrors, tmp }.
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -42,12 +46,24 @@ const sampleAccount = (n, extra = {}) => ({
   color: '#8b5cf6', services: ['claude', 'chatgpt'], cooldowns: { claude: 0, chatgpt: 0 }, ...extra
 });
 
+// Scénario lancé seul (ex. npm run test:perf) : il a créé son dossier
+// temporaire, mais ne peut pas le supprimer lui-même (Chromium garde ses
+// fichiers ouverts jusqu'à la fin du processus). Un petit processus détaché
+// le supprime une fois l'app fermée.
+function removeAfterExit(dir) {
+  const code = `const fs=require('fs');let n=0;const t=()=>{try{fs.rmSync(${JSON.stringify(dir)},{recursive:true,force:true})}catch(_){if(++n<40)setTimeout(t,500)}};setTimeout(t,500);`;
+  try {
+    spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }).unref();
+  } catch (_) { /* tant pis : dossier temporaire laissé */ }
+}
+
 function scenario(name, opts, body) {
   const tmp = process.env.OVCR_TEST_APPDATA || fs.mkdtempSync(path.join(os.tmpdir(), 'ovcr-int-'));
   const ownsTmp = !process.env.OVCR_TEST_APPDATA;
   app.setPath('appData', tmp);
   const userData = path.join(tmp, 'ai-manager');
   fs.mkdirSync(userData, { recursive: true });
+  if (process.env.OVCR_LOCAL_STATE && !opts.freshProfile) fs.copyFileSync(process.env.OVCR_LOCAL_STATE, path.join(userData, 'Local State'));
   if (opts.seed) opts.seed(userData);
 
   const results = [];
@@ -70,7 +86,7 @@ function scenario(name, opts, body) {
     if (!opts.allowDeprecated) check('aucune API Electron dépréciée utilisée', deprecations.length === 0, deprecations);
     const failed = results.filter(r => !r.ok).length;
     console.log(`@@RESULT ${JSON.stringify({ name, total: results.length, failed })}`);
-    if (ownsTmp) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
+    if (ownsTmp) removeAfterExit(tmp);
     app.exit(failed ? 1 : 0);
   };
   const timeout = setTimeout(() => { check('terminé avant le délai de 60 s', false); finish(); }, 60000);

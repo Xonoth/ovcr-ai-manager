@@ -79,10 +79,22 @@ Module._load = function (request, ...rest) {
   return originalLoad.call(this, request, ...rest);
 };
 
-// Crée un dossier userData vide et propre pour un test ; renvoie son chemin.
+// Crée un dossier userData propre pour un test ; renvoie son chemin. Il
+// contient un « Local State » avec une clé, comme un profil déjà utilisé :
+// accounts-store chiffre alors tout de suite. Profil neuf (clé pas encore
+// écrite par Chromium) : fake.removeLocalState(), puis fake.writeLocalState().
 function useTempUserData() {
   state.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'ovcr-test-'));
+  writeLocalState();
   return state.userData;
+}
+
+function writeLocalState() {
+  fs.writeFileSync(path.join(state.userData, 'Local State'), JSON.stringify({ os_crypt: { audit_enabled: true, encrypted_key: 'RFBBUEkBfaux' } }));
+}
+
+function removeLocalState() {
+  fs.rmSync(path.join(state.userData, 'Local State'), { force: true });
 }
 
 function cleanup() {
@@ -105,4 +117,4 @@ function freshRequire(modulePath) {
   return require(resolved);
 }
 
-module.exports = { electron, state, decrypt, useTempUserData, cleanup, reset, freshRequire };
+module.exports = { electron, state, decrypt, useTempUserData, writeLocalState, removeLocalState, cleanup, reset, freshRequire };

@@ -75,3 +75,23 @@ test('isTrustedSender : seul le cadre principal de la fenêtre hôte, sur index.
   assert.equal(policy.isTrustedSender(ok, null, INDEX), false, 'pas de fenêtre');
   assert.equal(policy.isTrustedSender(ok, { ...win, isDestroyed: () => true }, INDEX), false, 'fenêtre détruite');
 });
+
+test('F4 — limite des liens externes : 5 par minute et par page, fenêtre glissante', () => {
+  assert.deepEqual(policy.EXTERNAL_OPEN_LIMIT, { max: 5, windowMs: 60000 });
+  const allow = policy.createRateLimiter(5, 60000);
+  const t0 = 1_000_000;
+  for (let i = 0; i < 5; i++) assert.deepEqual(allow(t0 + i * 1000), { allowed: true, firstRefusal: false }, 'lien ' + (i + 1));
+  assert.deepEqual(allow(t0 + 5000), { allowed: false, firstRefusal: true }, '6e lien : refusé, tracé');
+  assert.deepEqual(allow(t0 + 6000), { allowed: false, firstRefusal: false }, '7e lien : refusé sans nouvelle trace');
+  assert.deepEqual(allow(t0 + 59999), { allowed: false, firstRefusal: false }, 'toujours dans la minute du 1er');
+  assert.deepEqual(allow(t0 + 60000), { allowed: true, firstRefusal: false }, 'le 1er sort de la fenêtre : une place libre');
+  assert.deepEqual(allow(t0 + 60001), { allowed: false, firstRefusal: true }, 'nouvelle série de refus : tracée');
+});
+
+test('F4 — limiteurs indépendants : une page ne consomme pas le quota d\'une autre', () => {
+  const a = policy.createRateLimiter(5, 60000);
+  const b = policy.createRateLimiter(5, 60000);
+  for (let i = 0; i < 6; i++) a(i);
+  assert.equal(a(10).allowed, false);
+  assert.equal(b(10).allowed, true);
+});

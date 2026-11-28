@@ -138,6 +138,80 @@ test('chiffrement indisponible : écrit en clair, rechiffré au chargement suiva
   assert.equal(readEnvelope('accounts.json').encryption, 'safeStorage');
 });
 
+// Profil neuf : Chromium n'écrit la clé dans « Local State » qu'une dizaine de
+// secondes après l'avoir créée. Un arrêt brutal entre-temps perdait la clé.
+const waitUntil = async (fn, ms = 3000) => {
+  const end = Date.now() + ms;
+  while (!fn()) {
+    if (Date.now() > end) throw new Error('délai dépassé');
+    await new Promise(r => setTimeout(r, 10));
+  }
+};
+
+test('profil neuf : clé pas encore sur le disque -> écriture provisoire en clair, rechiffrée dès qu\'elle y est', async () => {
+  fake.removeLocalState();
+  store = fake.freshRequire(STORE);
+  store._test.setReencryptPollMs(20);
+  await store.save([acc(1)]);
+  await store.save([acc(1), acc(2)]);
+  assert.equal(readEnvelope('accounts.json').encryption, 'none');
+  assert.equal(readEnvelope('accounts.json.bak').encryption, 'none');
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(readEnvelope('accounts.json').encryption, 'none', 'toujours en clair tant que la clé est absente');
+
+  const before = readEnvelope('accounts.json');
+  fake.writeLocalState();
+  await waitUntil(() => readEnvelope('accounts.json').encryption === 'safeStorage' && readEnvelope('accounts.json.bak').encryption === 'safeStorage');
+  const after = readEnvelope('accounts.json');
+  assert.equal(fake.decrypt(Buffer.from(after.payload, 'base64')), before.payload, 'même contenu');
+  assert.equal(after.savedAt, before.savedAt, 'date d\'enregistrement conservée');
+  assert.equal(after.schema, before.schema);
+  assert.deepEqual(ids((await store.load()).accounts), ['acc_1', 'acc_2']);
+  // Les enregistrements suivants sont chiffrés directement.
+  await store.save([acc(3)]);
+  assert.equal(readEnvelope('accounts.json').encryption, 'safeStorage');
+});
+
+test('profil neuf + migration 1.0.4 : la sauvegarde pré-migration est rechiffrée elle aussi', async () => {
+  fake.removeLocalState();
+  store = fake.freshRequire(STORE);
+  store._test.setReencryptPollMs(20);
+  const r = await store.migrateLegacy({ current: JSON.stringify([acc(1)]), backup: JSON.stringify([acc(2)]) });
+  assert.equal(r.ok, true);
+  const pre = path.join('backups', r.backupFile);
+  assert.equal(readEnvelope(pre).encryption, 'none');
+  assert.equal(readEnvelope(pre).schema, undefined);
+  fake.writeLocalState();
+  await waitUntil(() => ['accounts.json', 'accounts.json.bak', pre].every(f => readEnvelope(f).encryption === 'safeStorage'));
+  assert.equal(readEnvelope(pre).schema, undefined, 'aucun champ ajouté');
+});
+
+test('arrêt avant l\'écriture de la clé : au lancement suivant, tout est relu puis rechiffré', async () => {
+  fake.removeLocalState();
+  store = fake.freshRequire(STORE);
+  await store.migrateLegacy({ current: JSON.stringify([acc(1)]), backup: JSON.stringify([acc(2)]) });
+  // « Arrêt brutal » : nouveau processus ; entre-temps Chromium a écrit la clé.
+  fake.writeLocalState();
+  store = fake.freshRequire(STORE);
+  const l = await store.load();
+  assert.equal(l.status, 'ok');
+  assert.deepEqual(ids(l.accounts), ['acc_1']);
+  const files = ['accounts.json', 'accounts.json.bak', ...fs.readdirSync(p('backups')).map(f => path.join('backups', f))];
+  for (const f of files) assert.equal(readEnvelope(f).encryption, 'safeStorage', f);
+});
+
+test('rechiffrement différé : jamais un fichier d\'une version plus récente', async () => {
+  fake.removeLocalState();
+  store = fake.freshRequire(STORE);
+  writeEnvelope('accounts.json', JSON.stringify([acc(1)]), { schema: 99 });
+  const original = fs.readFileSync(p('accounts.json'), 'utf8');
+  assert.equal((await store.load()).status, 'newer');
+  fake.writeLocalState();
+  store = fake.freshRequire(STORE);
+  await store.load();
+  assert.equal(fs.readFileSync(p('accounts.json'), 'utf8'), original);
+});
+
 test('restoreBackup : met le fichier illisible de côté et remet la sauvegarde', async () => {
   await store.save([acc(1)]);
   await store.save([acc(1), acc(2)]);

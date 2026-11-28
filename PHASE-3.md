@@ -10,6 +10,8 @@
 > **P2 fait** en version **1.4.0** (28/11/2026) : fuses appliqués par `npm run dist` (`scripts/fuses.js`), vérifiés par `npm run test:fuses` sur une app jetable (19/19) ; `EnableEmbeddedAsarIntegrityValidation` fonctionne sous Windows avec electron-packager 20.3.0 (empreinte `ELECTRONASAR` déjà écrite) ; Monaco (`app.asar.unpacked`) reste chargeable. `EnableCookieEncryption` **non activé** (P3 en attente de décision), `GrantFileProtocolExtraPrivileges` laissé activé (P5). Détail : PROJECT_CONTEXT §13 « Phase 3 — P2 ». **Validée à la main par l'utilisateur** (`TESTS-MANUELS.md` §0 bis), zip `dist/OVCR-AI-Manager-1.4.0.zip` créé. Pas de release GitHub. Prochaine décision : P3 (cookies chiffrés).
 >
 > **P3 fait** en version **1.5.0** (28/11/2026, décision de l'utilisateur) : `EnableCookieEncryption` activé dans `scripts/fuses.js`. **Correction du §3 P3** : le passage ne chiffre **pas** les cookies existants. Ils restent lisibles, mais en clair, jusqu'à ce que le service les réécrive. L'utilisateur a choisi de ne pas les rechiffrer automatiquement : la doc indique de se déconnecter puis se reconnecter pour protéger un compte tout de suite. Le retour arrière est pire que prévu : une version sans le fuse efface **tous** les cookies, y compris ceux restés en clair. Vérifié par `npm run test:cookies` (17/17). Détail : PROJECT_CONTEXT §13 « Phase 3 — P3 », SECURITY.md §5. **Validée à la main par l'utilisateur** (`TESTS-MANUELS.md` §0), zip `dist/OVCR-AI-Manager-1.5.0.zip` créé. Pas de release GitHub. Ensuite, ordre conseillé : P8 → P6 → P7 → P5 → P9.
+>
+> **P8 fait** en version **1.6.0** (28/11/2026), **validé à la main par l'utilisateur** (`TESTS-MANUELS.md`, section « Version 1.6.0 »), zip `dist/OVCR-AI-Manager-1.6.0.zip` créé. Pas de release GitHub. Le risque noté après P1 était réel : sur un profil neuf, un arrêt brutal dans les ~10 s qui suivent le premier chiffrement rendait les comptes indéchiffrables. Corrigé : écriture provisoire en clair tant que la clé n'est pas dans `Local State`, puis rechiffrement automatique, et clé créée dès le démarrage. Également faits : F4 (5 liens externes par minute et par page), F5 (popups fermées avec leur page d'origine), F6 (`scripts/dist.js`, version lue dans `package.json`), tests automatisés de la boîte d'échec d'une popup et de la fermeture des popups, ménage des dossiers temporaires des tests, `undici` 7.30.2. **Reportés** : l'écran « ne répond plus » et la vraie coupure réseau restent manuels (aucun moyen fiable trouvé) ; `eslint` 10.16.0 et `@electron/packager` 20.3.1 (publiés le 27/11) pas avant le **11/12/2026**. Détail : PROJECT_CONTEXT §13 « Phase 3 — P8 ». Ensuite : P6 → P7 → P5 → P9.
 
 ---
 
@@ -161,6 +163,8 @@ Classés par priorité recommandée. Pour chacun : pourquoi, ce qu'on sait déj�
 
 ### P8 — Restes de l'audit phase 2 et dette technique
 
+> **Fait en 1.6.0**, sauf les deux tests restés manuels et les dépendances publiées depuis moins de deux semaines (voir l'avancement en tête de fichier).
+
 - **F4** : `shell.openExternal` sans limite de fréquence pour les liens hors liste ouverts par un site autorisé (`main.js`, `popupHandler`). Proposer une limite (ex. 5 par minute et par webview) avec trace dans le journal.
 - **F5** : les popups OAuth restent ouvertes quand leur webview est remplacée ou fermée. Les fermer avec la webview parente (suivre `opener` dans `web-contents-created`).
 - **F6** : la version est écrite deux fois (`"version"` et `--app-version=` dans le script `dist`). Attention : `npm run` passe par **cmd.exe** sous Windows, donc `$npm_package_version` ne marche pas. Solution robuste : un petit script Node de build qui lit `package.json`.
@@ -202,7 +206,7 @@ Ordre recommandé si tout est accepté : **P1 → P2 (+P3 si oui) → P8 → P6 
 5. Pour tout changement visuel : une capture du rendu réel (`win.webContents.capturePage()` dans un scénario jetable, dans un dossier temporaire).
 
 **Avant une livraison :**
-- mettre à jour la version (`package.json` : `"version"` **et** `--app-version`, tant que F6 n'est pas réglé) ;
+- mettre à jour la version (`package.json` : `"version"` seulement, depuis F6 en 1.6.0) ;
 - `npm run dist`, puis vérifier le contenu de `app.asar` : pas de `test/`, `eslint.config.js`, `*.md` internes ni `PHASE-3.md` ;
 - tests manuels par l'utilisateur (`TESTS-MANUELS.md`, à compléter avec les nouveautés) sur une **sauvegarde** de son profil ;
 - zip :
@@ -217,7 +221,8 @@ Ordre recommandé si tout est accepté : **P1 → P2 (+P3 si oui) → P8 → P6 
 ## 6. Pièges connus (appris en phase 2)
 
 - **Shell Bash de cet environnement** : les antislashs des heredocs et des chaînes passées à `eval` / `node -e` sont réinterprétés. Pour tout script non trivial, l'écrire dans un fichier avec l'outil d'écriture, puis l'exécuter.
-- **Build de test** : un `eval "npx electron-packager …"` lancé depuis Bash **n'applique pas** les motifs `--ignore` (le vrai `npm run dist` passe par cmd.exe et les applique). Pour un build de test hors de `dist/`, utiliser l'API JS de `@electron/packager` (`const { packager } = require('@electron/packager')`) avec les motifs relus dans `package.json`, et exclure `dist/` à la main.
+- **Build de test** : un `eval "npx electron-packager …"` lancé depuis Bash **n'applique pas** les motifs `--ignore`. Depuis la 1.6.0, `npm run dist` passe lui-même par l'API JS (`scripts/dist.js`). Pour un build de test hors de `dist/`, reprendre `require('./scripts/dist').packagerOptions(pkg)` en changeant `out`, et exclure `dist/` à la main.
+- **Profil neuf et `Local State`** : Chromium n'écrit la clé de chiffrement qu'environ 10 s après sa création (ou à la fermeture normale). Les scénarios d'intégration démarrent avec un `Local State` copié par `run.js` (profil déjà utilisé) ; un scénario qui veut un profil neuf passe `freshProfile: true`.
 - `@electron/asar` n'est pas installé à la racine : il est sous `node_modules/@electron/packager/node_modules/@electron/asar`.
 - **Tests de webview hors réseau** : `session.protocol.handle('https', …)` sert des pages factices. `Response.error()` produit un vrai `did-fail-load` (code -2), alors qu'**une requête annulée par `webRequest` n'en produit aucun**. Ne pas retirer le faux serveur pendant un test : la requête partirait vers le vrai service.
 - **Instance unique** : le verrou porte sur le dossier `userData`. Les tests (dossier temporaire) peuvent donc tourner pendant que l'app réelle est ouverte, et inversement.

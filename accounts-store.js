@@ -93,17 +93,117 @@ async function canEncrypt() {
   }
 }
 
+// ===== Clé de chiffrement pas encore écrite sur le disque (profil neuf) =====
+// Mesuré en 1.6.0 (Electron 45.3.2, Windows) : sur un profil neuf, la clé de
+// safeStorage est créée en mémoire au premier chiffrement, mais Chromium
+// n'écrit « Local State », le fichier qui la contient, qu'environ 10 s plus
+// tard. Un arrêt brutal dans cet intervalle (plantage, coupure de courant, fin
+// de tâche) perdait la clé : au lancement suivant, les comptes étaient
+// indéchiffrables. Tant que la clé n'est pas sur le disque, on écrit donc en
+// clair (comme quand le chiffrement est indisponible), puis on rechiffre les
+// mêmes fichiers dès qu'elle y est. Ne concerne qu'un profil neuf : premier
+// lancement, ou migration depuis la 1.0.4 (qui n'avait pas de clé).
+// Hors Windows, la clé n'est pas rangée dans « Local State » : pas de contrôle.
+const LOCAL_STATE = 'Local State';
+const REENCRYPT_MAX_MS = 5 * 60 * 1000;
+let keyOnDisk = process.platform !== 'win32';
+let reencryptPollMs = 1000;       // modifiable uniquement par les tests
+const reencryptPending = new Set();
+let reencryptTimer = null;
+
+async function keyIsOnDisk() {
+  if (keyOnDisk) return true;
+  try {
+    const ls = JSON.parse(await fsp.readFile(file(LOCAL_STATE), 'utf8'));
+    const key = ls && ls.os_crypt && ls.os_crypt.encrypted_key;
+    keyOnDisk = typeof key === 'string' && key.length > 0;
+  } catch (_) { /* absent (profil neuf) : on regardera de nouveau plus tard */ }
+  return keyOnDisk;
+}
+
+// Crée la clé dès le démarrage : elle est alors sur le disque une dizaine de
+// secondes plus tard, en général avant le premier enregistrement.
+async function prepareKey() {
+  if (!(await canEncrypt()) || (await keyIsOnDisk())) return;
+  try { await safeStorage.encryptStringAsync('ovcr'); } catch (_) { /* signalé au premier enregistrement */ }
+}
+
+// Rechiffre les enveloppes écrites en clair SANS rien changer d'autre (champs,
+// date, schéma). Jamais un fichier d'une version plus récente. À appeler dans serial().
+async function reencryptPlainFiles(paths) {
+  let count = 0;
+  for (const p of paths) {
+    let env;
+    try { env = JSON.parse(await fsp.readFile(p, 'utf8')); } catch (_) { continue; }
+    if (!env || env.format !== FORMAT || env.encryption !== 'none' || typeof env.payload !== 'string') continue;
+    const schema = schemaOf(env);
+    if ((Number.isInteger(env.version) && env.version > VERSION) || schema === null || schema > currentSchema) continue;
+    const payload = (await safeStorage.encryptStringAsync(env.payload)).toString('base64');
+    await writeAtomic(p, { ...env, encryption: 'safeStorage', payload });
+    count++;
+  }
+  return count;
+}
+
+// Rechiffre ces fichiers dès que la clé est sur le disque (vérifié chaque
+// seconde, pendant 5 min au plus ; au-delà, le prochain lancement s'en charge).
+function reencryptLater(paths) {
+  for (const p of paths) reencryptPending.add(p);
+  if (reencryptTimer) return;
+  const started = Date.now();
+  const tick = async () => {
+    reencryptTimer = null;
+    if (await keyIsOnDisk()) {
+      // Les fichiers signalés, plus tous les fichiers de comptes : une
+      // rotation a pu copier un fichier en clair vers .bak entre-temps.
+      const extra = [...reencryptPending];
+      reencryptPending.clear();
+      await serial(async () => reencryptPlainFiles([...new Set([file(MAIN_FILE), file(BAK_FILE), ...(await backupFiles()), ...extra])]))
+        .then(n => console.log(`[accounts] clé de chiffrement enregistrée sur le disque : ${n} fichier(s) rechiffré(s)`))
+        .catch(err => console.warn('[accounts] rechiffrement reporté :', err.code || err.message));
+      return;
+    }
+    if (Date.now() - started > REENCRYPT_MAX_MS) {
+      console.warn('[accounts] clé de chiffrement toujours absente du disque : rechiffrement au prochain lancement');
+      return;
+    }
+    reencryptTimer = setTimeout(tick, reencryptPollMs);
+    reencryptTimer.unref();
+  };
+  reencryptTimer = setTimeout(tick, reencryptPollMs);
+  reencryptTimer.unref();
+}
+
 // schema : version de schéma de la charge utile (omis pour les fichiers qui ne
 // contiennent pas une liste de comptes, ex. la sauvegarde pré-migration 1.0.4).
-async function encode(raw, schema) {
+// filePath : fichier qui recevra l'enveloppe (rechiffré plus tard si l'écriture
+// est provisoirement en clair).
+async function encode(raw, schema, filePath) {
   const base = { format: FORMAT, version: VERSION, savedAt: new Date().toISOString() };
   if (schema !== undefined) base.schema = schema;
   if (await canEncrypt()) {
-    return { ...base, encryption: 'safeStorage', payload: (await safeStorage.encryptStringAsync(raw)).toString('base64') };
+    if (await keyIsOnDisk()) {
+      return { ...base, encryption: 'safeStorage', payload: (await safeStorage.encryptStringAsync(raw)).toString('base64') };
+    }
+    console.warn('[accounts] clé de chiffrement pas encore enregistrée sur le disque : écriture provisoire en clair');
+    if (filePath) reencryptLater([filePath]);
+  } else {
+    console.warn('[accounts] chiffrement safeStorage indisponible : écriture en clair');
   }
-  console.warn('[accounts] chiffrement safeStorage indisponible : écriture en clair');
   return { ...base, encryption: 'none', payload: raw };
 }
+
+// Fichiers .json de backups/ (vide si le dossier n'existe pas).
+async function backupFiles() {
+  try {
+    return (await fsp.readdir(file(BACKUP_DIR))).filter(f => f.endsWith('.json')).map(f => path.join(file(BACKUP_DIR), f));
+  } catch (_) {
+    return [];
+  }
+}
+
+// Enveloppe écrite de façon atomique dans filePath.
+const writeEnvelope = async (filePath, raw, schema) => writeAtomic(filePath, await encode(raw, schema, filePath));
 
 // Schéma déclaré par une enveloppe : absent = 1 ; présent mais invalide = null.
 function schemaOf(env) {
@@ -302,7 +402,7 @@ async function migrateMainFile(cur) {
     if (problem) throw new Error('validation : ' + problem);
 
     const raw = JSON.stringify(migrated);
-    await writeAtomic(file(MAIN_FILE), await encode(raw, to));
+    await writeEnvelope(file(MAIN_FILE), raw, to);
     const back = await decodeFile(file(MAIN_FILE));
     if (back.status !== 'ok' || back.raw !== raw || back.schema !== to) {
       await copyAtomic(backupPath, file(MAIN_FILE));
@@ -336,14 +436,20 @@ async function loadInner() {
     // (le réécrire supprimerait les champs que cette version ne connaît pas).
     if (cur.newer) return { status: 'newer', accounts, schema: cur.schema, supported: currentSchema };
     if (cur.schema < currentSchema) return migrateMainFile(cur);
-    // Écrit en clair faute de chiffrement lors d'un lancement précédent :
-    // on rechiffre dès que c'est possible. Un échec n'empêche pas de
-    // travailler (le fichier en clair reste valide) : on le signale.
+    // Écrit en clair lors d'un lancement précédent (chiffrement indisponible,
+    // ou clé pas encore sur le disque) : on rechiffre dès que c'est possible,
+    // avec la sauvegarde (.bak) et les copies de backups/, écrites dans les
+    // mêmes conditions. Un échec n'empêche pas de travailler (le fichier en
+    // clair reste valide) : on le signale.
     const encrypted = await canEncrypt();
     if (cur.encryption === 'none' && encrypted) {
-      await encode(cur.raw, cur.schema)
-        .then(env => writeAtomic(file(MAIN_FILE), env))
-        .catch(err => console.warn('[accounts] rechiffrement reporté :', err.code || err.message));
+      const plain = [file(MAIN_FILE), file(BAK_FILE), ...(await backupFiles())];
+      if (await keyIsOnDisk()) {
+        await reencryptPlainFiles(plain)
+          .catch(err => console.warn('[accounts] rechiffrement reporté :', err.code || err.message));
+      } else {
+        reencryptLater(plain);
+      }
     }
     return { status: 'ok', accounts, encrypted };
   }
@@ -380,7 +486,7 @@ function save(list) {
       // Fichier illisible : mis de côté (jamais détruit).
       if (cur.status !== 'missing') await moveAside(mainPath, 'unreadable');
     }
-    await writeAtomic(mainPath, await encode(raw, currentSchema));
+    await writeEnvelope(mainPath, raw, currentSchema);
     return { ok: true, encrypted: await canEncrypt() };
   }).catch(err => {
     console.error('[accounts] échec d\'enregistrement :', err.code || err.message);
@@ -439,13 +545,13 @@ function migrateLegacy(payload) {
       source: 'localStorage (1.0.4)', createdAt: new Date().toISOString(),
       keys: { ai_accounts: current == null ? null : current, ai_accounts_backup: backup == null ? null : backup }
     });
-    await writeAtomic(preFile, await encode(preRaw));
+    await writeEnvelope(preFile, preRaw);
 
     const written = [[preFile, preRaw]];
     // Les listes de la 1.0.4 sont au schéma 1 : si l'app en est à un schéma
     // plus récent, le chargement qui suit les migre (avec sa sauvegarde).
-    if (backup != null) { await writeAtomic(file(BAK_FILE), await encode(backup, 1)); written.push([file(BAK_FILE), backup]); }
-    if (current != null) { await writeAtomic(file(MAIN_FILE), await encode(current, 1)); written.push([file(MAIN_FILE), current]); }
+    if (backup != null) { await writeEnvelope(file(BAK_FILE), backup, 1); written.push([file(BAK_FILE), backup]); }
+    if (current != null) { await writeEnvelope(file(MAIN_FILE), current, 1); written.push([file(MAIN_FILE), current]); }
 
     for (const [p, expected] of written) {
       const back = await decodeFile(p);
@@ -494,10 +600,12 @@ function confirmRevert() {
 
 module.exports = {
   load, save, restoreBackup, migrateLegacy, pendingRevert, confirmRevert, revertRequested, REVERT_FLAG,
-  isIdle, whenIdle,
+  isIdle, whenIdle, prepareKey,
   SCHEMA,
   _test: {
     sanitizeList, parseRaw, runMigrations,
+    // Délai entre deux vérifications de la clé sur le disque (tests uniquement).
+    setReencryptPollMs(ms) { reencryptPollMs = ms; },
     // Remplace le schéma courant et les migrations (tests uniquement).
     setSchema(schema, steps) { currentSchema = schema; migrations = steps; },
     resetSchema() { currentSchema = SCHEMA; migrations = MIGRATIONS; }

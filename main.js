@@ -82,17 +82,35 @@ let mainWindow = null;
 // Liste blanche des origines et règles pures : voir security-policy.js.
 const isAppIndexUrl = (urlStr) => policy.isAppIndexUrl(urlStr, INDEX_PATH);
 
+// Limite des liens ouverts dans le navigateur système, par page (F4).
+const externalOpenLimiters = new WeakMap();
+function externalOpenAllowed(contents) {
+  let limiter = externalOpenLimiters.get(contents);
+  if (!limiter) {
+    limiter = policy.createRateLimiter(policy.EXTERNAL_OPEN_LIMIT.max, policy.EXTERNAL_OPEN_LIMIT.windowMs);
+    externalOpenLimiters.set(contents, limiter);
+  }
+  return limiter(Date.now());
+}
+
 // Popups des webviews (et des popups elles-mêmes) : seules les origines
 // connues ouvrent une fenêtre Electron, qui hérite des webPreferences de
 // l'invité (sandbox, sans Node) — jamais de celles de l'hôte.
-function popupHandler({ url }) {
+function popupHandler(contents, { url }) {
   if (isAllowedPopup(url)) return { action: 'allow' };
   // Origine hors liste : jamais de fenêtre Electron. Si c'est un lien web
-  // classique, on le confie au navigateur système (aucun privilège Node) ;
-  // sinon (about:, data:, javascript:…) on refuse purement.
+  // classique, on le confie au navigateur système (aucun privilège Node),
+  // dans la limite de 5 par minute et par page ; sinon (about:, data:,
+  // javascript:…) on refuse purement.
   if (/^https?:\/\//i.test(url)) {
-    shell.openExternal(url);
-    console.warn('[security] popup hors liste -> navigateur système :', hostOf(url));
+    const { allowed, firstRefusal } = externalOpenAllowed(contents);
+    if (allowed) {
+      shell.openExternal(url).catch(err => console.warn('[security] ouverture dans le navigateur système impossible :', err.message));
+      console.warn('[security] popup hors liste -> navigateur système :', hostOf(url));
+    } else if (firstRefusal) {
+      const { max, windowMs } = policy.EXTERNAL_OPEN_LIMIT;
+      console.warn(`[security] plus de ${max} liens externes en ${windowMs / 1000} s depuis ${hostOf(safeUrl(contents))} : liens suivants ignorés (premier : ${hostOf(url)})`);
+    }
   } else {
     console.warn('[security] popup refusée (schéma non web) :', hostOf(url));
   }
@@ -184,7 +202,8 @@ function createWindow() {
 app.on('web-contents-created', (_event, contents) => {
   const type = contents.getType();
   if (type === 'webview' || (type === 'window' && contents.opener)) {
-    contents.setWindowOpenHandler(popupHandler);
+    contents.setWindowOpenHandler(details => popupHandler(contents, details));
+    contents.on('did-create-window', child => closeWithOpener(contents, child));
     contents.on('will-attach-webview', (event) => event.preventDefault());
     // Traces pour le diagnostic (hôte seulement, jamais l'URL complète).
     contents.on('render-process-gone', (_e, d) => console.warn(`[${type}] processus arrêté :`, d.reason, hostOf(safeUrl(contents))));
@@ -196,6 +215,20 @@ app.on('web-contents-created', (_event, contents) => {
     if (type === 'window') watchPopupLoad(contents);
   }
 });
+
+// Popup (connexion OAuth) dont la page d'origine disparaît (panneau fermé,
+// service changé, plantage) : elle n'a plus personne à qui répondre, on la
+// ferme avec elle (audit phase 2, F5). En cascade : ses propres popups
+// suivent. destroy() et non close() : une page ne peut pas la retenir.
+function closeWithOpener(opener, child) {
+  const onOpenerGone = () => {
+    if (child.isDestroyed()) return;
+    console.log('[window] popup fermée avec sa page d\'origine :', hostOf(safeUrl(child.webContents)));
+    child.destroy();
+  };
+  opener.once('destroyed', onOpenerGone);
+  child.once('closed', () => { if (!opener.isDestroyed()) opener.removeListener('destroyed', onOpenerGone); });
+}
 
 function safeUrl(contents) {
   try { return contents.getURL(); } catch (_) { return ''; }
@@ -227,7 +260,10 @@ function watchPopupLoad(contents) {
       if (contents.isDestroyed()) return;
       const choice = buttons[response];
       if (choice === 'Réessayer') contents.loadURL(url).catch(err => console.warn('[window] nouvel essai impossible :', err.message));
-      else if (choice === 'Ouvrir dans le navigateur') { shell.openExternal(url); popup.close(); }
+      else if (choice === 'Ouvrir dans le navigateur') {
+        shell.openExternal(url).catch(err => console.warn('[window] ouverture dans le navigateur système impossible :', err.message));
+        popup.close();
+      }
       else popup.close();
     } catch (err) {
       console.warn('[window] boîte de dialogue impossible :', err.message);
@@ -413,6 +449,9 @@ app.on('second-instance', (_event, argv) => {
 
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return;
+  // Profil neuf : crée tout de suite la clé de chiffrement, pour qu'elle soit
+  // sur le disque avant le premier enregistrement (voir accounts-store.js).
+  accountsStore.prepareKey().catch(err => console.warn('[accounts] préparation de la clé impossible :', err.message));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

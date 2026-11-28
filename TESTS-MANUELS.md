@@ -9,6 +9,22 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
+## Version 1.6.0 (restes de l'audit, phase 3 P8) — validée le 28/11/2026
+
+La 1.6.0 ne change ni le format des données ni les fuses. Nouveautés : premier
+enregistrement d'un profil neuf protégé contre un arrêt brutal, popups de
+connexion fermées avec leur panneau, liens externes limités à 5 par minute et
+par page, construction du `.exe` par `scripts/dist.js`. Tout est couvert par
+`npm run test:electron` sur des pages locales, mais **pas** avec le vrai `.exe`,
+le vrai profil ni les vrais services.
+
+- [ ] **Sauvegarde** : app fermée, copier `%APPDATA%\ai-manager` ailleurs.
+- [ ] Lancer le `.exe` 1.6.0 sur le vrai profil : l'app démarre, tous les comptes sont là, `?` → « Diagnostic » indique la version **1.6.0** et « Stockage : ok, N compte(s), chiffré ». Clic droit sur le `.exe` → Propriétés → Détails : version **1.6.0**.
+- [ ] Ouvrir 2 ou 3 services déjà connectés : sessions conservées.
+- [ ] **Popup Google** : sur un service, cliquer « Continuer avec Google » (la popup s'ouvre), puis, sans la fermer, ouvrir un autre service dans le même panneau : la popup se ferme toute seule. Recommencer et aller au bout de la connexion : elle aboutit comme avant.
+- [ ] Éditeur Monaco : s'ouvre et colore un fichier (contrôle rapide).
+- [ ] (Facultatif, profil neuf) Sur un compte Windows de test, ou après avoir renommé `%APPDATA%\ai-manager` (app fermée) : lancer la 1.6.0, attendre 15 s, ajouter un compte, fermer, relancer : le compte est là, Diagnostic « chiffré ». Puis remettre le vrai dossier à sa place.
+
 ## 0. Version 1.5.0 (cookies chiffrés) — validée le 28/11/2026
 
 La 1.5.0 active un seul fuse de plus, `EnableCookieEncryption` (SECURITY.md
@@ -82,8 +98,8 @@ Points d'attention : Leonardo, Suno (auth Clerk : Google / Discord / téléphone
 - [ ] **Service indisponible / DNS** (ex. pendant une panne d'un fournisseur, ou en bloquant un domaine dans le pare-feu) → écran « Site introuvable » ou « Service injoignable ».
 - [ ] **Ouvrir dans le navigateur** : ouvre l'adresse du service dans le navigateur habituel ; le message rappelle que la session du compte n'y est pas.
 - [ ] **Fermer le panneau** depuis l'écran d'erreur : panneau vide, mémoire libérée (diagnostic : un processus « Tab » en moins).
-- [ ] **Service qui ne répond plus** (difficile à provoquer : page très lourde) → écran « Le service ne répond plus » avec « Attendre ».
-- [ ] **Popup de connexion qui échoue** (couper le réseau pendant la popup Google) → boîte « La page de connexion n'a pas pu se charger » avec Réessayer / Ouvrir dans le navigateur / Fermer.
+- [ ] **Service qui ne répond plus** (difficile à provoquer : page très lourde) → écran « Le service ne répond plus » avec « Attendre ». Pas de test automatique : en 1.6.0, cinq façons de bloquer la page d'un panneau ont été essayées, aucune n'a déclenché la détection de Chromium.
+- [ ] **Popup de connexion qui échoue** (couper le réseau pendant la popup Google) → boîte « La page de connexion n'a pas pu se charger » avec Réessayer / Ouvrir dans le navigateur / Fermer. Depuis la 1.6.0, la boîte et ses trois boutons sont vérifiés automatiquement (`test/integration/popups.js`, réponse simulée) : ce test manuel vérifie la vraie boîte native et une vraie coupure.
 - [ ] Aucun de ces écrans ne parle de quota ou de cooldown, et aucun cooldown n'est modifié.
 
 ## 4. Cooldowns

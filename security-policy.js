@@ -87,7 +87,34 @@ function isTrustedSender(event, mainWindow, indexPath) {
     && isAppIndexUrl(frame.url, indexPath);
 }
 
+// Liens hors liste ouverts dans le navigateur système par un site autorisé
+// (audit phase 2, F4) : au plus 5 par minute et par page (webview ou popup).
+// Au-delà, le lien est ignoré : un site ne peut pas inonder le navigateur.
+const EXTERNAL_OPEN_LIMIT = Object.freeze({ max: 5, windowMs: 60 * 1000 });
+
+// Limiteur à fenêtre glissante : au plus `max` acceptations sur `windowMs`.
+// Pur (l'heure est fournie par l'appelant). Renvoie { allowed, firstRefusal } ;
+// firstRefusal ne vaut vrai qu'au premier refus d'une série, pour ne tracer
+// qu'une ligne dans le journal par rafale.
+function createRateLimiter(max, windowMs) {
+  const times = [];
+  let refusing = false;
+  return (now) => {
+    while (times.length && now - times[0] >= windowMs) times.shift();
+    if (times.length >= max) {
+      const firstRefusal = !refusing;
+      refusing = true;
+      return { allowed: false, firstRefusal };
+    }
+    refusing = false;
+    times.push(now);
+    return { allowed: true, firstRefusal: false };
+  };
+}
+
 module.exports = {
+  EXTERNAL_OPEN_LIMIT,
+  createRateLimiter,
   ALLOWED_POPUP_HOSTS,
   isAllowedHost,
   isAllowedPopup: isAllowedHost,

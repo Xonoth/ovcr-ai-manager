@@ -1,6 +1,6 @@
 # Sécurité — [OVCR] AI Manager
 
-État après la **phase 1 « Sécurité et fondations »**, la **phase 2 « Fiabilité et robustesse »** et le début de la **phase 3** (Electron 45 en 1.3.0, fuses en 1.4.0, cookies chiffrés en 1.5.0 ; novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
+État après la **phase 1 « Sécurité et fondations »**, la **phase 2 « Fiabilité et robustesse »** et le début de la **phase 3** (Electron 45 en 1.3.0, fuses en 1.4.0, cookies chiffrés en 1.5.0, restes de l'audit en 1.6.0 ; novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
 
 ## 1. Modèle : qui a le droit de faire quoi
 
@@ -69,7 +69,7 @@ Vérifié par `npm run test:fuses` sur une app **jetable** construite comme la v
 
 Seul le preload d'identité navigateur (`browser-identity-preload.js`, enregistré sur la session) s'exécute dans les sites.
 
-Popups : seules les origines de `ALLOWED_POPUP_HOSTS` ouvrent une fenêtre (sandboxée, même session que la webview) ; un autre lien web part dans le navigateur système ; les autres schémas sont refusés. Le filtre s'applique aussi aux popups ouvertes **depuis** une popup. Aucune webview ne peut en imbriquer une autre.
+Popups : seules les origines de `ALLOWED_POPUP_HOSTS` ouvrent une fenêtre (sandboxée, même session que la webview) ; un autre lien web part dans le navigateur système, **au plus 5 par minute et par page** depuis la 1.6.0 (au-delà, le lien est ignoré et une ligne est écrite dans le journal) ; les autres schémas sont refusés. Le filtre s'applique aussi aux popups ouvertes **depuis** une popup. Une popup est **fermée avec sa page d'origine** (panneau fermé ou changé de service, depuis la 1.6.0) : elle ne reste pas ouverte sans personne à qui répondre. Aucune webview ne peut en imbriquer une autre.
 
 ## 4. Fichiers (explorateur + éditeur) — `file-access.js`
 
@@ -86,12 +86,16 @@ Pas de liste blanche d'extensions : l'éditeur sert à du code de toute sorte (`
 
 | Donnée | Emplacement | Protection |
 |---|---|---|
-| Comptes (noms, e-mails, profils, cooldowns) | `%APPDATA%\ai-manager\accounts.json` (+ `.bak`) | **chiffré** `safeStorage` (DPAPI : lisible seulement par ce compte Windows) |
+| Comptes (noms, e-mails, profils, cooldowns) | `%APPDATA%\ai-manager\accounts.json` (+ `.bak`) | **chiffré** `safeStorage` (DPAPI : lisible seulement par ce compte Windows). Profil **neuf** : en clair quelques secondes, le temps que Chromium écrive la clé sur le disque (voir ci-dessous) |
 | Sauvegardes (`pre-migration-*`, `pre-schema-*`, `bak-preserved-*`) | `%APPDATA%\ai-manager\backups\` | copies d'enveloppes : chiffrées de même ; jamais supprimées par l'app |
 | Autorisations des sites | `%APPDATA%\ai-manager\site-permissions.json` | en clair (origines + oui/non : rien de personnel) |
 | Préférences d'affichage (largeurs, cartes repliées) | `localStorage` | en clair (non sensibles) |
 | Journal de diagnostic | `%APPDATA%\ai-manager\logs\ovcr*.log` (3 × 1 Mo max) | en clair, **expurgé** : e-mails masqués, URL réduites à l'hôte (pas de jeton OAuth), nom du compte Windows retiré des chemins ; ne contient que des identifiants techniques (id de compte, hôte, code d'erreur). Rien n'est envoyé : l'utilisateur copie le diagnostic s'il veut le partager. |
 | **Cookies / sessions des services IA** | `%APPDATA%\ai-manager\Partitions\<profil>\Network\Cookies` | **chiffrés** depuis la 1.5.0 (fuse `EnableCookieEncryption`, même DPAPI et même clé que `safeStorage`), **sauf** les cookies écrits en clair par une version antérieure et pas encore réécrits — voir ci-dessous |
+
+### Premier enregistrement d'un profil neuf (depuis la 1.6.0)
+
+La clé de `safeStorage` est rangée dans `Local State`, que Chromium n'écrit qu'**environ 10 s** après l'avoir créée. Jusqu'à la 1.5.0, un arrêt brutal dans cet intervalle (plantage, coupure de courant, fin de tâche) rendait les premiers comptes **indéchiffrables**. Depuis la 1.6.0, l'app crée la clé dès le démarrage et, tant qu'elle n'est pas sur le disque, écrit les comptes **en clair** ; elle les rechiffre (avec `.bak` et `backups/`) dès que la clé y est. Ne concerne qu'un profil neuf : premier lancement, ou migration depuis la 1.0.4. Le contenu en clair a pu rester dans les secteurs libres du disque, comme pour toute réécriture de fichier.
 
 ### Cookies chiffrés (depuis la 1.5.0)
 
@@ -134,8 +138,8 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 - `style-src 'unsafe-inline'` dans la CSP (nécessaire à Monaco et aux styles en ligne).
 - Exécutable non signé (SmartScreen). La vérification d'intégrité (1.4.0) protège `app.asar` contre une modification **isolée**, mais : elle ne couvre ni `app.asar.unpacked` (Monaco, chargé par l'interface), ni le `.exe` et les DLL ; et sans signature, rien n'empêche de remplacer **ensemble** le `.exe` et `app.asar` (ou d'inscrire une nouvelle empreinte). Comme pour `safeStorage`, cela ne protège pas d'un programme malveillant qui écrit déjà dans le dossier de l'app : la signature (§7) est le complément.
 - La liste `ALLOWED_POPUP_HOSTS` fait confiance à tous les sous-domaines de ses entrées (ex. `*.google.com`).
-- Un site autorisé peut ouvrir des liens dans le navigateur système sans limite de fréquence (comportement antérieur, inchangé).
-- **Electron** : passé de 43.7.1 à 43.8.10 en 1.2.0 (4 alertes `npm audit` d'Electron corrigées), puis à **45.3.2** en 1.3.0 (Chromium **156.0.8078.100**), avant la fin de support de la 43 (Electron ne corrige que les 3 dernières versions majeures). Version désormais **figée** dans `package.json`. Le changement de Chromium modifie la marque « GREASE » annoncée (`"Not:A-Brand"` v8 en 156) : un test d'intégration la compare à celle que Chromium calcule lui-même, et vérifie que FedCM reste désactivé. La connexion Google réelle reste à valider à la main à chaque montée de Chromium. Le chiffrement des comptes passe par l'**API asynchrone** de `safeStorage` (l'API synchrone disparaît en Electron 46) : même DPAPI, même clé, même format, donc même protection et retour arrière vers la 1.2.0 possible. Attention, `npm audit --omit=dev` ne voit pas Electron (déclaré en dépendance de développement alors qu'il est **embarqué dans le .exe**) : toujours lancer `npm audit` complet. Les alertes restantes (`undici`, `glob`, `minimatch`, `@electron/asar`, `eslint`) concernent les **outils de développement** (packager, ESLint), pas le .exe.
+- Un site autorisé peut toujours ouvrir des liens dans le navigateur système, mais au plus 5 par minute et par page depuis la 1.6.0.
+- **Electron** : passé de 43.7.1 à 43.8.10 en 1.2.0 (4 alertes `npm audit` d'Electron corrigées), puis à **45.3.2** en 1.3.0 (Chromium **156.0.8078.100**), avant la fin de support de la 43 (Electron ne corrige que les 3 dernières versions majeures). Version désormais **figée** dans `package.json`. Le changement de Chromium modifie la marque « GREASE » annoncée (`"Not:A-Brand"` v8 en 156) : un test d'intégration la compare à celle que Chromium calcule lui-même, et vérifie que FedCM reste désactivé. La connexion Google réelle reste à valider à la main à chaque montée de Chromium. Le chiffrement des comptes passe par l'**API asynchrone** de `safeStorage` (l'API synchrone disparaît en Electron 46) : même DPAPI, même clé, même format, donc même protection et retour arrière vers la 1.2.0 possible. Attention, `npm audit --omit=dev` ne voit pas Electron (déclaré en dépendance de développement alors qu'il est **embarqué dans le .exe**) : toujours lancer `npm audit` complet. Les alertes restantes concernent les **outils de développement** (packager, ESLint), pas le .exe : `undici` corrigé en 1.6.0 (7.30.2) ; `glob`, `minimatch`, `@electron/asar`, `eslint` (« moderate ») attendent eslint 10.16.0 et @electron/packager 20.3.1, publiés le 27/11/2026 (règle des deux semaines : pas avant le 11/12/2026).
 
 ## 7. Pistes pour la suite (non faites)
 
