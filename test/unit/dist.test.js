@@ -45,7 +45,8 @@ test('exclus du .exe : tests, scripts, documents internes, extras de Monaco', ()
 test('gardés dans le .exe : code de l\'app, interface, licence, Monaco min', () => {
   for (const p of ['/main.js', '/accounts-store.js', '/index.html', '/renderer/app.js', '/assets', '/LICENSE', '/package.json',
     '/node_modules/monaco-editor/min/vs/loader.js', '/node_modules/monaco-editor/min/vs/editor/editor.main.js',
-    '/node_modules/monaco-editor/min/vs/editor/editor.main.nls.js', '/node_modules/monaco-editor/LICENSE', '/renderer/test-mode.js']) {
+    '/node_modules/monaco-editor/min/vs/editor/editor.main.nls.js', '/node_modules/monaco-editor/LICENSE', '/renderer/test-mode.js',
+    '/renderer/core.js', '/renderer/diagnostics-ui.js', '/renderer/editor.js']) {
     assert.equal(excluded(p), false, p);
   }
 });
