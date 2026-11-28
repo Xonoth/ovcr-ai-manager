@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { session } = require('electron');
+const { session, shell } = require('electron');
 const { scenario } = require('./harness');
 const diagnostics = require('../../diagnostics');
 
@@ -37,9 +37,53 @@ scenario('Diagnostics : journal expurgé, erreurs de l\'interface, section Diagn
   check('diagnostic : derniers événements', /erreur-de-test-lot3/.test(text));
   check('diagnostic : aucun e-mail', !/alice\.secret/.test(text));
   check('aide masquée pendant le diagnostic', await js('document.getElementById("helpList").hidden'));
+  check('diagnostic : état de l\'interface (écriture, panneaux, vue)', /Écriture des comptes : possible/.test(text) && /Panneaux : 0 ouvert\(s\), vue simple/.test(text), text);
+
+  // Boutons du diagnostic (P6 lot 2). Le presse-papiers est remplacé DANS LA
+  // PAGE : le test ne touche jamais au presse-papiers réel de l'utilisateur.
+  const toasts = () => js('[...document.querySelectorAll(".toast")].map(t => t.textContent.trim())');
+  const clearToasts = () => js('document.querySelectorAll(".toast").forEach(t => t.remove()); true');
+  await clearToasts();
+  await js('navigator.clipboard.writeText = async (t) => { window.__copied = t; }; true');
+  await js('document.querySelector(\'[data-cmd="copy-diagnostic"]\').click(); true');
+  await delay(300);
+  check('« Copier le diagnostic » : texte affiché copié, confirmation',
+    await js('window.__copied') === text && (await toasts()).some(t => /Diagnostic copié/.test(t)));
+  await clearToasts();
+  await js('navigator.clipboard.writeText = async () => { throw new Error("refus de test"); }; true');
+  await js('document.querySelector(\'[data-cmd="copy-diagnostic"]\').click(); true');
+  await delay(300);
+  check('copie refusée : repli « Ctrl+C » expliqué', (await toasts()).some(t => /Copie impossible : sélectionnez le texte/.test(t)));
+  // « Ouvrir le dossier des journaux » : l'Explorateur n'est pas lancé pendant
+  // le test, on vérifie seulement le dossier demandé au système.
+  const openedPaths = [];
+  shell.openPath = async (p) => { openedPaths.push(p); return ''; };
+  await clearToasts();
+  await js('document.querySelector(\'[data-cmd="open-logs"]\').click(); true');
+  await delay(300);
+  check('« Ouvrir le dossier des journaux » : dossier logs demandé, sans erreur',
+    openedPaths.length === 1 && path.resolve(openedPaths[0]) === path.join(userData, 'logs') && !(await toasts()).some(t => /Impossible/.test(t)), openedPaths);
+  shell.openPath = async () => 'refusé pour le test';
+  await js('document.querySelector(\'[data-cmd="open-logs"]\').click(); true');
+  await delay(300);
+  check('dossier des journaux impossible à ouvrir : message', (await toasts()).some(t => /Impossible d'ouvrir le dossier des journaux/.test(t)));
+  await js('document.querySelector(\'[data-cmd="show-diagnostic"]\').click(); true');
+  check('2e clic sur « Diagnostic » : retour à la liste des IA', await js('!document.getElementById("helpList").hidden && document.getElementById("diagPanel").hidden'));
+
   await js(`closeHelpModal(); openHelpModal(); true`);
   check('l\'aide se rouvre sur la liste des IA', await js('!document.getElementById("helpList").hidden && document.getElementById("diagPanel").hidden'));
-  await js('closeHelpModal(); true');
+  const entries = await js('[...document.querySelectorAll("#helpList .help-entry")].map(e => e.querySelector(".help-entry__name").textContent + "|" + e.querySelectorAll(".help-entry__line").length)');
+  check('aide : une fiche par service (nom, « C\'est quoi ? », « Quand l\'utiliser ? »)', entries.length === 9 && entries[0] === 'Claude|2' && entries.every(e => e.endsWith('|2')), entries);
+  await clearToasts();
+  await js('document.querySelector(\'[data-cmd="reset-permissions"]\').click(); true');
+  await delay(300);
+  check('« Réinitialiser les autorisations des sites » : confirmé', (await toasts()).some(t => /Autorisations des sites réinitialisées/.test(t)));
+  await js('document.getElementById("helpModal").dispatchEvent(new MouseEvent("click", { bubbles: true })); true');
+  check('clic sur le fond : aide refermée', !(await js('document.getElementById("helpModal").classList.contains("open")')));
+  await js('openHelpModal(); document.querySelector("#helpList").click(); true');
+  check('clic dans la boîte : aide toujours ouverte', await js('document.getElementById("helpModal").classList.contains("open")'));
+  await js('document.querySelector(\'[data-cmd="close-help"]\').click(); true');
+  check('bouton « Fermer » : aide refermée', !(await js('document.getElementById("helpModal").classList.contains("open")')));
 
   // Écran d'erreur de démarrage (composant appelé directement : le
   // déclenchement réel suppose un défaut dans le code de démarrage).
