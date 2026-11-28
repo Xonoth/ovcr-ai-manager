@@ -18,6 +18,7 @@
 //   editor.js         éditeur de fichiers (Monaco à la demande, secours) ;
 //   layout.js         préférences d'affichage, replis, colonnes ;
 //   storage-ui.js     stockage des comptes, mode protégé, récupération ;
+//   transfer-ui.js    export / import des comptes (fenêtres, choix des conflits) ;
 //   accounts-ui.js    liste des comptes, cooldowns, palette, fenêtres ;
 //   panes.js          panneaux de service (webviews, erreurs, vue scindée).
 // Fonctions pures testées sous Node : cooldowns.js, pane-errors.js.
@@ -122,6 +123,10 @@ async function initApp() {
   // showDiagnostic, copyDiagnostic, openLogsFolder, resetSitePermissions.
   OVCR.diagnosticsUi.init({ api, SERVICES });
 
+  // Export / import des comptes (renderer/transfer-ui.js) : définit
+  // exportAccounts et importAccounts (boutons de l'en-tête des comptes).
+  OVCR.transferUi.init({ api, renderAccounts, ensureWritable, migrateOldAccounts });
+
   layout.setupResizers();
 
   // --- Délégation d'événements (chantier A) ---
@@ -177,7 +182,9 @@ async function initApp() {
     'reset-permissions': () => resetSitePermissions(),
     'show-diagnostic':  () => showDiagnostic(),
     'copy-diagnostic':  () => copyDiagnostic(),
-    'open-logs':        () => openLogsFolder()
+    'open-logs':        () => openLogsFolder(),
+    'export-accounts':  () => exportAccounts(),
+    'import-accounts':  () => importAccounts()
   };
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-cmd]');

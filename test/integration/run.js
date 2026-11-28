@@ -35,6 +35,8 @@ const SCENARIOS = [
   ['cooldowns.js'],
   ['ui-basics.js'],
   ['ui-editor.js'],
+  ['ui-transfer.js', { OVCR_SCENARIO: 'normal' }],
+  ['ui-transfer.js', { OVCR_SCENARIO: 'protected' }],
   ['single-instance.js']
 ];
 

@@ -57,7 +57,8 @@ module.exports = [
           'confirmDelete', 'openService', 'toggleCooldown', 'toggleCardCollapse', 'toggleAllCards',
           'toggleDashboard', 'toggleExplorer', 'toggleIdePanel', 'openHelpModal', 'closeHelpModal',
           'closePane2', 'setLayout', 'selectLocalFolder', 'loadFileInEditor', 'filterPalette',
-          'resetSitePermissions', 'showDiagnostic', 'copyDiagnostic', 'openLogsFolder'
+          'resetSitePermissions', 'showDiagnostic', 'copyDiagnostic', 'openLogsFolder',
+          'exportAccounts', 'importAccounts'
         ].map(n => [n, 'writable']))
       }
     },

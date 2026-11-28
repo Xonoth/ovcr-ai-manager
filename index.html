@@ -313,6 +313,16 @@
   .diag-actions { display: flex; gap: 10px; flex-wrap: wrap; }
   .form-warning { margin-top: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.5; color: var(--warning); background: rgba(255,179,71,0.10); border: 1px solid rgba(255,179,71,0.35); border-radius: var(--radius-sm); }
   .form-warning[hidden] { display: none; }
+  /* Export / import des comptes (renderer/transfer-ui.js, phase 3 P7) */
+  .modal--transfer { width: 520px; max-width: calc(100vw - 48px); max-height: calc(100vh - 96px); overflow-y: auto; }
+  .transfer__info { color: var(--fg-muted); font-size: 13px; line-height: 1.55; margin-top: 12px; }
+  .transfer__label { font-size: 12px; color: var(--fg-muted); font-weight: 600; margin-top: 16px; }
+  .transfer__conflicts { margin: 8px 0 0; padding: 8px 12px 8px 28px; max-height: 160px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; line-height: 1.7; word-break: break-word; }
+  .transfer__modes { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .transfer__mode { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer; }
+  .transfer__mode input { accent-color: var(--accent); margin: 2px 0 0; flex-shrink: 0; }
+  .transfer__mode small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: 2px; }
+  .transfer__note { margin-top: 16px; font-size: 12px; color: var(--fg-muted); }
   /* Panneaux IA : chargement masquable, écran d'erreur, bandeau hors ligne (lot 4) */
   .pane-loading[hidden] { display: none; }
   .pane-error { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 32px; text-align: center; background: var(--bg); overflow: auto; }
@@ -362,6 +372,8 @@
     <span>Comptes enregistrés</span>
     <div style="display:flex; gap:6px;">
       <button class="btn btn--icon" id="btnToggleAllCards" data-cmd="toggle-all-cards" title="Tout replier / Tout déplier"><span class="ic" data-icon="chevron-down"></span></button>
+      <button class="btn btn--icon" id="btnExportAccounts" data-cmd="export-accounts" title="Exporter les comptes (fichier en clair, sans cookies)"><span class="ic" data-icon="tray-export"></span></button>
+      <button class="btn btn--icon" id="btnImportAccounts" data-cmd="import-accounts" title="Importer des comptes"><span class="ic" data-icon="tray-import"></span></button>
       <button class="btn btn--icon" data-cmd="add-account" title="Ajouter un compte"><span class="ic" data-icon="plus"></span></button>
     </div>
   </div>
@@ -490,6 +502,7 @@
 <script src="renderer/editor.js"></script>
 <script src="renderer/layout.js"></script>
 <script src="renderer/storage-ui.js"></script>
+<script src="renderer/transfer-ui.js"></script>
 <script src="renderer/accounts-ui.js"></script>
 <script src="renderer/panes.js"></script>
 <script src="renderer/app.js"></script>

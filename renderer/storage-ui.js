@@ -128,21 +128,8 @@
         }));
     }
 
-    // Fondation réutilisable pour une future fonctionnalité d'export/import JSON
-    // (ne pas coder le backup « en dur » : ces deux fonctions serviront à l'UI).
-    // eslint-disable-next-line no-unused-vars -- fondation documentée pour une future UI d'export
-    function exportAccountsJSON() { return JSON.stringify(state.accounts, null, 2); }
-    // eslint-disable-next-line no-unused-vars -- fondation documentée pour une future UI d'import
-    function importAccountsJSON(text) {
-      if (!state.storageWritable) throw new Error('Comptes non chargés : import impossible.');
-      const parsed = JSON.parse(text); // peut throw : l'appelant (UI) gère l'erreur
-      if (!Array.isArray(parsed)) throw new Error('Format invalide : un tableau de comptes est attendu.');
-      state.accounts = parsed;
-      migrateOldAccounts();  // complète/répare les comptes importés
-      saveAccounts(state.accounts);
-      renderAccounts();
-      return state.accounts.length;
-    }
+    // (Export / import : renderer/transfer-ui.js depuis la phase 3 P7 ; les
+    // anciennes fondations exportAccountsJSON / importAccountsJSON sont retirées.)
 
     // Renvoie true si le démarrage doit s'arrêter (retour arrière effectué).
     async function handlePendingRevert() {
