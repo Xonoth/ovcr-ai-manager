@@ -1,6 +1,6 @@
 {
   "name": "ai-manager",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "[OVCR] AI Manager - gestionnaire multi-comptes IA",
   "main": "main.js",
   "author": "X'o-noth",
@@ -12,8 +12,9 @@
     "test:electron": "node test/integration/run.js",
     "test:perf": "electron --js-flags=--expose-gc test/integration/perf.js",
     "test:fuses": "node test/packaged/fuses.js",
+    "test:cookies": "node --disable-warning=ExperimentalWarning test/packaged/cookies.js",
     "lint": "eslint .",
-    "dist": "electron-packager . \"[OVCR] AI Manager\" --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --app-version=1.4.0 --asar.unpack=**/monaco-editor/** --ignore=\"monaco-editor/(dev|esm|min-maps)\" --ignore=\"monaco-editor/(CHANGELOG|ThirdPartyNotices|README)\" --ignore=\"editor\\.main\\.nls\\.[a-z-]+\\.js\" --ignore=\"^/(PROJECT_CONTEXT\\.md|README\\.md|SECURITY\\.md|TESTS-MANUELS\\.md|PHASE-3\\.md|THIRD-PARTY-NOTICES\\.md|DISTRIBUTION-LISEZ-MOI\\.txt|\\.gitignore)$\" --ignore=\"^/test($|/)\" --ignore=\"^/scripts($|/)\" --ignore=\"^/eslint\\.config\\.js$\" && node scripts/fuses.js && node scripts/prune-locales.js"
+    "dist": "electron-packager . \"[OVCR] AI Manager\" --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --app-version=1.5.0 --asar.unpack=**/monaco-editor/** --ignore=\"monaco-editor/(dev|esm|min-maps)\" --ignore=\"monaco-editor/(CHANGELOG|ThirdPartyNotices|README)\" --ignore=\"editor\\.main\\.nls\\.[a-z-]+\\.js\" --ignore=\"^/(PROJECT_CONTEXT\\.md|README\\.md|SECURITY\\.md|TESTS-MANUELS\\.md|PHASE-3\\.md|THIRD-PARTY-NOTICES\\.md|DISTRIBUTION-LISEZ-MOI\\.txt|\\.gitignore)$\" --ignore=\"^/test($|/)\" --ignore=\"^/scripts($|/)\" --ignore=\"^/eslint\\.config\\.js$\" && node scripts/fuses.js && node scripts/prune-locales.js"
   },
   "keywords": [],
   "devDependencies": {

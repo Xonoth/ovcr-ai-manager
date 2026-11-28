@@ -49,6 +49,7 @@ npm test                # tests unitaires (node:test)
 npm run test:electron   # tests d'intégration (vrai Electron, données temporaires, sans réseau)
 npm run test:perf       # mesures mémoire / fuites
 npm run test:fuses      # fuses du .exe, sur une app jetable (dossier temporaire)
+npm run test:cookies    # chiffrement des cookies : mise à jour, reconnexion, retour arrière (app jetable)
 npm run lint            # ESLint
 ```
 
@@ -103,7 +104,8 @@ Transparence complète — ce qui est fait, et ce qui ne l'est pas :
 Le détail complet (modèle, migration, retour arrière, limites) est dans [SECURITY.md](SECURITY.md).
 
 **Limites assumées (à connaître avant d'utiliser) :**
-- **Les sessions IA (cookies) sont stockées en clair** dans `%APPDATA%\ai-manager\Partitions` (gérées par Chromium). Les métadonnées de comptes, elles, sont désormais chiffrées (`safeStorage`/DPAPI), ce qui protège des autres comptes Windows mais pas d'un programme malveillant lancé sous le vôtre. Règle simple : **une session Windows = une personne** — n'utilisez pas l'app dans un compte Windows partagé.
+- Les comptes et, depuis la 1.5.0, les **sessions IA (cookies)** sont chiffrés (`safeStorage`/DPAPI), ce qui protège des autres comptes Windows et de la copie du dossier, mais pas d'un programme malveillant lancé sous le vôtre. Règle simple : **une session Windows = une personne** — n'utilisez pas l'app dans un compte Windows partagé.
+- Les sessions ouvertes **avant** la 1.5.0 restent en clair tant que le service ne les renouvelle pas : se déconnecter puis se reconnecter les chiffre tout de suite. Le chiffrement est **irréversible** : revenir à une version antérieure efface toutes les sessions (reconnexion partout). Détail : [SECURITY.md](SECURITY.md) §5.
 - L'exécutable distribué n'est **pas signé** (avertissement SmartScreen normal).
 
 **Mesures en place :**
@@ -114,7 +116,7 @@ Le détail complet (modèle, migration, retour arrière, limites) est dans [SECU
 - Échappement HTML systématique de toute donnée utilisateur injectée dans le DOM ; aucun `onclick` généré dynamiquement (délégation d'événements par `data-*`).
 - La fenêtre hôte ne peut pas naviguer vers une URL distante ni ouvrir de fenêtre ; les popups des webviews sont filtrées par **liste blanche d'origines** (les 9 services + fournisseurs OAuth courants), tout le reste part dans le navigateur système.
 - **Autorisations des sites demandées, plus accordées d'office** : position, micro, caméra, notifications, lecture du presse-papiers, capture d'écran et ouverture d'applications externes déclenchent une question (« Autoriser / Refuser », mémorisable par site). Le reste (USB, MIDI, série…) est refusé. Bouton « Réinitialiser les autorisations des sites » dans la page d'aide (`?`).
-- **Exécutable durci (fuses Electron)** : le `.exe` ne peut plus servir de Node.js (`ELECTRON_RUN_AS_NODE`), ignore `NODE_OPTIONS` et `--inspect`, ne charge l'app que depuis `app.asar` et refuse de démarrer si cette archive a été modifiée.
+- **Exécutable durci (fuses Electron)** : le `.exe` ne peut plus servir de Node.js (`ELECTRON_RUN_AS_NODE`), ignore `NODE_OPTIONS` et `--inspect`, ne charge l'app que depuis `app.asar` et refuse de démarrer si cette archive a été modifiée ; depuis la 1.5.0, il chiffre les cookies des sessions.
 - Garde-fous divers : unicité des profils (pas de partage de session accidentel), limite de taille des fichiers ouverts dans l'éditeur, stockage tolérant à la corruption avec backup, **une seule instance** de l'app à la fois (pas d'écritures concurrentes).
 - Journal de diagnostic **local et expurgé** ; « Ouvrir dans le navigateur » n'accepte que l'adresse https d'un service connu.
 
@@ -125,7 +127,7 @@ Les issues de sécurité sont bienvenues — merci de les signaler de façon res
 Projet maintenu en solo, contributions bienvenues — en particulier :
 
 - **Ajouter un service IA** (le pattern est entièrement data-driven) : une entrée dans `SERVICES`, des variables de couleur `--<id>`/`--<id>-dim` + une classe `.svc-<id>`, une fiche `SERVICE_INFO` pour la page d'aide, et si besoin le domaine d'auth dans `ALLOWED_POPUP_HOSTS` (`main.js`). La migration attache automatiquement le nouveau service aux comptes existants.
-- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : chiffrement des cookies, signature).
+- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : signature, protocole `app://`).
 
 Règles du projet : JS vanilla sans dépendance nouvelle, toute donnée utilisateur passe par `escapeHtml()`, aucun script ni `onclick` inline (CSP), tout accès disque passe par une méthode dédiée de `window.ovcr` validée dans le processus principal, les écritures de comptes passent par `saveAccounts()`, les listes cliquables utilisent la délégation d'événements. Lisez `PROJECT_CONTEXT.md` avant une contribution non triviale. Fork → branche → pull request.
 

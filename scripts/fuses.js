@@ -23,9 +23,12 @@ const crypto = require('crypto');
 const WANTED = Object.freeze({
   // Plus de « .exe utilisé comme Node.js » (ELECTRON_RUN_AS_NODE=1).
   RunAsNode: false,
-  // P3, décision de l'utilisateur, pas encore prise : les cookies des sessions
-  // restent en clair. L'activer est irréversible (voir PHASE-3.md §3 P3).
-  EnableCookieEncryption: false,
+  // P3 (1.5.0, décision de l'utilisateur) : les cookies des sessions sont
+  // chiffrés sur le disque (DPAPI, même clé que safeStorage, dans Local State).
+  // IRRÉVERSIBLE : une version sans ce fuse efface TOUS les cookies au
+  // démarrage. Les cookies déjà écrits en clair le restent tant que le service
+  // ne les réécrit pas (vérifié par npm run test:cookies).
+  EnableCookieEncryption: true,
   // NODE_OPTIONS ignoré (pas d'injection de --require au lancement).
   EnableNodeOptionsEnvironmentVariable: false,
   // --inspect / --inspect-brk ignorés : le `.exe` n'est plus débogable.

@@ -35,7 +35,7 @@ test('WANTED décide explicitement de chaque fuse connu de @electron/fuses', () 
   for (const v of Object.values(fuses.WANTED)) assert.equal(typeof v, 'boolean');
 });
 
-test('jeu de fuses de la phase 3 (P2), cookies laissés à la décision P3', () => {
+test('jeu de fuses de la phase 3 (P2 + P3 : cookies chiffrés)', () => {
   const w = fuses.WANTED;
   assert.equal(w.RunAsNode, false);
   assert.equal(w.EnableNodeOptionsEnvironmentVariable, false);
@@ -44,8 +44,9 @@ test('jeu de fuses de la phase 3 (P2), cookies laissés à la décision P3', () 
   assert.equal(w.OnlyLoadAppFromAsar, true);
   // Interface encore en file:// (P5 non fait) : la désactiver casserait l'app.
   assert.equal(w.GrantFileProtocolExtraPrivileges, true);
-  // P3 : irréversible, uniquement sur décision explicite de l'utilisateur.
-  assert.equal(w.EnableCookieEncryption, false);
+  // P3 (1.5.0), décidé par l'utilisateur. IRRÉVERSIBLE : le repasser à false
+  // ferait perdre toutes les sessions (voir npm run test:cookies).
+  assert.equal(w.EnableCookieEncryption, true);
   assert.ok(Object.isFrozen(w));
 });
 
@@ -60,7 +61,7 @@ test('binaire aux valeurs par défaut : écarts listés, puis applyFuses les cor
   const exe = fakeExe();
   const before = await fuses.checkFuses(exe, lib);
   assert.deepEqual(before.map(p => p.split(' : ')[0]).sort(), [
-    'EnableEmbeddedAsarIntegrityValidation', 'EnableNodeCliInspectArguments',
+    'EnableCookieEncryption', 'EnableEmbeddedAsarIntegrityValidation', 'EnableNodeCliInspectArguments',
     'EnableNodeOptionsEnvironmentVariable', 'OnlyLoadAppFromAsar', 'RunAsNode'
   ]);
   assert.deepEqual(await fuses.applyFuses(exe, lib), []);

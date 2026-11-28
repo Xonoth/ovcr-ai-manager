@@ -1,6 +1,6 @@
 # Sécurité — [OVCR] AI Manager
 
-État après la **phase 1 « Sécurité et fondations »**, la **phase 2 « Fiabilité et robustesse »** et le début de la **phase 3** (Electron 45 en 1.3.0, fuses en 1.4.0 ; novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
+État après la **phase 1 « Sécurité et fondations »**, la **phase 2 « Fiabilité et robustesse »** et le début de la **phase 3** (Electron 45 en 1.3.0, fuses en 1.4.0, cookies chiffrés en 1.5.0 ; novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
 
 ## 1. Modèle : qui a le droit de faire quoi
 
@@ -55,7 +55,7 @@ Les fuses sont des octets écrits dans le `.exe` lui-même, lus par Electron ava
 | `EnableEmbeddedAsarIntegrityValidation` | activé | Refus de démarrer si l'en-tête d'`app.asar` ne correspond plus à l'empreinte inscrite dans le `.exe` (ressource `ELECTRONASAR`, écrite par `@electron/packager`), refus de lire un fichier de l'archive dont le contenu a changé. |
 | `OnlyLoadAppFromAsar` | activé | Un dossier `resources/app` posé à côté n'est pas chargé. |
 | `GrantFileProtocolExtraPrivileges` | **activé** (défaut) | Nécessaire tant que l'interface est en `file://` (chantier `app://`, voir §7). |
-| `EnableCookieEncryption` | **désactivé** (défaut) | Décision de l'utilisateur, irréversible : voir §6 et §7. |
+| `EnableCookieEncryption` | **activé** depuis la 1.5.0 | Les cookies des sessions sont chiffrés sur le disque. Décision de l'utilisateur, **irréversible** : voir §5 « Cookies chiffrés ». |
 | `LoadBrowserProcessSpecificV8Snapshot`, `WasmTrapHandlers` | défauts d'Electron | Écrits explicitement : chaque fuse est décidé (une future version d'Electron qui en ajoute un fait échouer le build). |
 
 Vérifié par `npm run test:fuses` sur une app **jetable** construite comme la vraie, avec le même Electron et le même jeu de fuses : chaque contournement est d'abord constaté **sans** fuses (témoin), puis refusé **avec**. L'app jetable vérifie aussi qu'une page de l'archive charge toujours un script de `app.asar.unpacked`, comme l'interface charge Monaco. Le vrai `.exe` n'est jamais lancé par les tests (il utiliserait le vrai profil).
@@ -91,7 +91,16 @@ Pas de liste blanche d'extensions : l'éditeur sert à du code de toute sorte (`
 | Autorisations des sites | `%APPDATA%\ai-manager\site-permissions.json` | en clair (origines + oui/non : rien de personnel) |
 | Préférences d'affichage (largeurs, cartes repliées) | `localStorage` | en clair (non sensibles) |
 | Journal de diagnostic | `%APPDATA%\ai-manager\logs\ovcr*.log` (3 × 1 Mo max) | en clair, **expurgé** : e-mails masqués, URL réduites à l'hôte (pas de jeton OAuth), nom du compte Windows retiré des chemins ; ne contient que des identifiants techniques (id de compte, hôte, code d'erreur). Rien n'est envoyé : l'utilisateur copie le diagnostic s'il veut le partager. |
-| **Cookies / sessions des services IA** | `%APPDATA%\ai-manager\Partitions\<profil>\` | **en clair** — voir limites |
+| **Cookies / sessions des services IA** | `%APPDATA%\ai-manager\Partitions\<profil>\Network\Cookies` | **chiffrés** depuis la 1.5.0 (fuse `EnableCookieEncryption`, même DPAPI et même clé que `safeStorage`), **sauf** les cookies écrits en clair par une version antérieure et pas encore réécrits — voir ci-dessous |
+
+### Cookies chiffrés (depuis la 1.5.0)
+
+Mesuré avec Electron 45.3.2 sur une app jetable (`npm run test:cookies`, 17 vérifications) :
+
+- **Mise à jour sans perte** : la 1.5.0 relit tous les cookies écrits en clair par une version antérieure. Aucune reconnexion n'est nécessaire.
+- **Chiffrement au fil de l'eau** : un cookie nouveau ou réécrit par un service est enregistré chiffré (préfixe `v10`, AES-GCM, clé protégée par DPAPI dans `Local State`). L'ancienne valeur en clair disparaît des fichiers (`Cookies` et `Cookies-journal`).
+- **Ce qui reste en clair** : Chromium ne rechiffre **pas** les cookies existants. Un cookie de connexion longue durée (par exemple ceux de Google) peut donc rester en clair des mois, tant que le service ne le renouvelle pas. Pour protéger **tout de suite** un compte, il suffit de **se déconnecter du service puis de se reconnecter** : la nouvelle session est chiffrée et l'ancienne est effacée (vérifié par le test). Un rechiffrement automatique par l'API `cookies` d'Electron a été écarté : il perdrait des attributs qu'elle ne sait pas exprimer (partition CHIPS, priorité, date de création), avec un risque de déconnexion, Google surtout.
+- **Irréversible** : une version **sans** ce fuse (1.4.0 et antérieures, ou la 1.0.4 après `--revert-storage-migration`) **efface tous les cookies de toutes les partitions** au démarrage, y compris ceux qui étaient encore en clair : il faut se reconnecter partout. Revenir ensuite à la 1.5.0 ne les rend pas. Les comptes (`accounts.json`) ne sont pas concernés : ils restent lisibles dans les deux sens. Seule parade : une **copie du dossier** `%APPDATA%\ai-manager` faite **avant** le passage à la 1.5.0, remise en place avant de relancer l'ancienne version. Cette copie contient les anciens cookies en clair : la supprimer une fois la 1.5.0 adoptée.
 
 ### Migration depuis la 1.0.4 (automatique, une fois)
 
@@ -109,7 +118,7 @@ Le renderer n'efface les clés `localStorage` qu'après ce succès. Les cookies 
 & ".\[OVCR] AI Manager.exe" --revert-storage-migration
 ```
 
-Les comptes **actuels** sont réécrits dans le `localStorage` au format 1.0.4, `accounts.json(.bak)` sont renommés en `*.reverted-<date>.json` (rien n'est supprimé), puis l'app se ferme : la 1.0.4 peut être relancée. Testé : la vraie 1.0.4 relit alors les comptes, y compris les modifications faites après la migration.
+Les comptes **actuels** sont réécrits dans le `localStorage` au format 1.0.4, `accounts.json(.bak)` sont renommés en `*.reverted-<date>.json` (rien n'est supprimé), puis l'app se ferme : la 1.0.4 peut être relancée. Testé : la vraie 1.0.4 relit alors les comptes, y compris les modifications faites après la migration. **Depuis la 1.5.0**, la 1.0.4 ne relit plus les cookies chiffrés : les comptes reviennent, mais il faut se reconnecter à tous les services (voir « Cookies chiffrés »).
 
 ### Récupération
 
@@ -119,8 +128,8 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 
 ## 6. Limites restantes (assumées, à connaître)
 
-- **Cookies de session en clair** dans `Partitions/`. Ils sont gérés par Chromium, pas par l'app ; l'app ne les lit ni ne les exporte. Les chiffrer passe par le fuse Electron `EnableCookieEncryption` (voir §7) — **irréversible** : volontairement non activé sans décision explicite.
-- `safeStorage`/DPAPI protège contre les autres comptes Windows et la copie du disque à froid, **pas** contre un programme malveillant qui tourne sous votre compte (il peut demander le déchiffrement lui-même). Règle inchangée : **une session Windows = une personne**.
+- **Cookies écrits avant la 1.5.0** : restés en clair dans `Partitions/` tant que le service ne les a pas renouvelés (se déconnecter puis se reconnecter les remplace, §5). Les cookies sont gérés par Chromium, pas par l'app ; l'app ne les lit ni ne les exporte. Le chiffrement est **irréversible** : revenir à une version antérieure efface toutes les sessions.
+- `safeStorage`/DPAPI (comptes **et** cookies depuis la 1.5.0) protège contre les autres comptes Windows et la copie du disque à froid, **pas** contre un programme malveillant qui tourne sous votre compte (il peut demander le déchiffrement lui-même). Règle inchangée : **une session Windows = une personne**.
 - Les anciennes valeurs effacées du `localStorage` peuvent subsister quelque temps dans les fichiers internes de LevelDB (`Local Storage\leveldb\*.log`) jusqu'à leur compactage par Chromium.
 - `style-src 'unsafe-inline'` dans la CSP (nécessaire à Monaco et aux styles en ligne).
 - Exécutable non signé (SmartScreen). La vérification d'intégrité (1.4.0) protège `app.asar` contre une modification **isolée**, mais : elle ne couvre ni `app.asar.unpacked` (Monaco, chargé par l'interface), ni le `.exe` et les DLL ; et sans signature, rien n'empêche de remplacer **ensemble** le `.exe` et `app.asar` (ou d'inscrire une nouvelle empreinte). Comme pour `safeStorage`, cela ne protège pas d'un programme malveillant qui écrit déjà dans le dossier de l'app : la signature (§7) est le complément.
@@ -130,6 +139,5 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 
 ## 7. Pistes pour la suite (non faites)
 
-- **Fuse `EnableCookieEncryption`** (les autres fuses sont appliqués depuis la 1.4.0, §2) : sur décision de l'utilisateur seulement (passage sûr de « clair » à « chiffré », mais retour impossible : une version antérieure perdrait toutes les sessions). Il suffira de le passer à `true` dans `scripts/fuses.js` (et d'adapter `test/unit/fuses.test.js`).
 - Signature de l'exécutable.
 - Protocole `app://` personnalisé à la place de `file://` (origine propre ; demanderait une migration du `localStorage` restant).

@@ -73,7 +73,9 @@ sur le disque, dans ton dossier utilisateur Windows :
 
    %APPDATA%\ai-manager
 
->>> Ces sessions ne sont PAS chiffrees. <<<
+Depuis la version 1.5.0, ces sessions sont CHIFFREES avec la cle de
+ton compte Windows : copier le dossier sur une autre machine ou un autre
+compte Windows ne suffit plus pour se connecter a tes comptes IA.
 
 Consequence a connaitre :
 
@@ -84,11 +86,39 @@ Consequence a connaitre :
     l'application QUE dans TA propre session Windows. Si plusieurs
     personnes se connectent sous LE MEME compte Windows, elles
     partageront les memes sessions IA (chacun verrait les comptes
-    de l'autre).
+    de l'autre). Le chiffrement n'y change rien : il protege des
+    AUTRES comptes Windows, pas du tien.
 
 Regle simple : une session Windows = une personne. C'est deja le cas
 sur la plupart des PC ; ne partage pas ton compte Windows si tu tiens
 a l'isolement de tes comptes IA.
+
+
+--------------------------------------------------------
+4. MISE A JOUR VERS LA 1.5.0 (A LIRE SI TU AVAIS UNE VERSION AVANT)
+--------------------------------------------------------
+
+La mise a jour garde tous tes comptes ET tes sessions : pas besoin de
+te reconnecter.
+
+Deux choses a savoir :
+
+  - Les sessions deja ouvertes avant la 1.5.0 restent en clair sur le
+    disque tant que le service ne les renouvelle pas (parfois pendant
+    des mois). Pour proteger un compte TOUT DE SUITE : dans l'IA,
+    deconnecte-toi puis reconnecte-toi. La nouvelle session est
+    chiffree.
+
+  - >>> Pas de retour en arriere sans se reconnecter partout. <<<
+    Si tu relances une version PLUS ANCIENNE que la 1.5.0 (1.4.0 ou
+    avant), elle efface toutes les sessions : tes comptes restent
+    la, mais il faudra te reconnecter a chaque IA.
+
+Prudence conseillee : AVANT de lancer la 1.5.0 pour la premiere fois,
+ferme l'application et copie le dossier %APPDATA%\ai-manager ailleurs.
+Si tu dois revenir a l'ancienne version, remets cette copie a sa place
+avant de la relancer. Une fois la 1.5.0 adoptee, SUPPRIME cette copie
+(elle contient tes anciennes sessions, non chiffrees).
 
 
 --------------------------------------------------------

@@ -9,7 +9,28 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
-## 0. Version 1.4.0 (fuses Electron) — validée le 28/11/2026
+## 0. Version 1.5.0 (cookies chiffrés) — validée le 28/11/2026
+
+La 1.5.0 active un seul fuse de plus, `EnableCookieEncryption` (SECURITY.md
+§5 « Cookies chiffrés »). `npm run test:cookies` vérifie le mécanisme sur une
+app jetable : mise à jour sans perte, nouveaux cookies chiffrés, reconnexion,
+perte totale au retour arrière. Il ne vérifie **pas** le vrai `.exe`, le vrai
+profil ni les vrais services.
+
+⚠️ **Irréversible** : une fois le profil ouvert par la 1.5.0, **ne plus le
+rouvrir avec la 1.4.0**, qui effacerait toutes les sessions. La sauvegarde
+ci-dessous est la seule voie de retour.
+
+- [ ] **Sauvegarde OBLIGATOIRE** : app fermée, copier `%APPDATA%\ai-manager` ailleurs (par exemple `ai-manager-avant-1.5.0`).
+- [ ] Lancer le `.exe` 1.5.0 sur le vrai profil : l'app démarre, tous les comptes sont là, `?` → « Diagnostic » indique la version **1.5.0** et « Stockage : ok, N compte(s), chiffré ».
+- [ ] Ouvrir **tous** les services déjà connectés (ou au moins 4 ou 5, dont Gemini et un service connecté par Google) : sessions conservées, **pas de reconnexion demandée**.
+- [ ] **Reconnexion** sur un compte peu important : dans le service, se déconnecter puis se reconnecter (de préférence par « Continuer avec Google ») : la connexion aboutit. Fermer l'app, la rouvrir : ce service est toujours connecté. C'est le vrai `.exe` qui relit des cookies chiffrés.
+- [ ] Fermer et rouvrir l'app deux fois : toutes les sessions sont toujours là.
+- [ ] Éditeur Monaco et popup « Continuer avec Google » : comme en 1.4.0 (contrôle rapide).
+- [ ] (Facultatif, vérifie la parade du retour arrière) app fermée : renommer `%APPDATA%\ai-manager` en `ai-manager-1.5.0`, remettre la sauvegarde sous le nom `ai-manager`, lancer la **1.4.0** : comptes et sessions d'avant la mise à jour sont là. Fermer, supprimer ce dossier `ai-manager` (celui de la 1.4.0), renommer `ai-manager-1.5.0` en `ai-manager`, relancer la 1.5.0 : tout est là.
+- [ ] Une fois la 1.5.0 adoptée : **supprimer la sauvegarde**, qui contient les anciennes sessions en clair.
+
+## 0 bis. Version 1.4.0 (fuses Electron) — validée le 28/11/2026
 
 La 1.4.0 ne change que le `.exe` (fuses, voir SECURITY.md §2) : ni le code, ni
 les données. `npm run test:fuses` vérifie le mécanisme sur une app jetable,
@@ -22,7 +43,7 @@ mais **pas** le vrai `.exe` avec le vrai profil (les tests ne le lancent jamais)
 - [ ] (Contrôle facultatif) dans PowerShell, depuis le dossier du `.exe` : `$env:ELECTRON_RUN_AS_NODE='1'; & '.\[OVCR] AI Manager.exe' -e "console.log('node')"; Remove-Item Env:ELECTRON_RUN_AS_NODE` : l'app **s'ouvre normalement** et rien n'est affiché dans la console (en 1.3.0, le `.exe` servait de Node.js et affichait `node`).
 - [ ] Retour à la 1.3.0 puis à la 1.4.0 : tout est toujours là (les fuses ne touchent pas aux données ; `EnableCookieEncryption` n'est **pas** activé).
 
-## 0 bis. Version 1.3.0 (Electron 45) — validée le 28/11/2026
+## 0 ter. Version 1.3.0 (Electron 45) — validée le 28/11/2026
 
 La 1.3.0 change de moteur (Chromium 150 → 156) et d'API de chiffrement des
 comptes. Les tests automatiques couvrent le format et l'identité navigateur,
