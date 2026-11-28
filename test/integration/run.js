@@ -30,6 +30,8 @@ const SCENARIOS = [
   ['popups.js'],
   ['browser-identity.js'],
   ['cooldowns.js'],
+  ['ui-basics.js'],
+  ['ui-editor.js'],
   ['single-instance.js']
 ];
 
