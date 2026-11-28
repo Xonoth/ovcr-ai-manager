@@ -7,7 +7,8 @@
 | Contexte | Contenu | Node.js | Sandbox | Accès au disque / comptes |
 |---|---|---|---|---|
 | Processus principal (`main.js` + modules) | code de l'app | oui | — | oui, **seul** à y toucher |
-| Fenêtre hôte (`index.html` + `renderer/*.js`) | interface locale | **non** | oui | uniquement via `window.ovcr` (preload), validé par le main |
+| Fenêtre hôte (`app://ovcr/index.html` + `renderer/*.js`) | interface locale | **non** | oui | uniquement via `window.ovcr` (preload), validé par le main |
+| Pont vers l'ancien localStorage (`legacy-bridge/legacy-storage.html`, `file://`, depuis la 1.9.0) | page vide, fenêtre cachée | non | oui | aucun (pas de preload, aucun script : seul le main y exécute la lecture / l'écriture de clés autorisées) |
 | `<webview>` des services IA | sites distants | non | oui | aucun |
 | Popups OAuth | sites distants | non | oui | aucun |
 
@@ -17,7 +18,8 @@
 
 - `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, `webSecurity: true`.
 - **Preload `app-preload.js`** : expose `window.ovcr` avec une liste **fermée** de méthodes (une par opération). Jamais `ipcRenderer`, `require`, `process`, ni fonction « envoyer sur n'importe quel canal ».
-- **Chaque canal IPC vérifie l'expéditeur** (`isTrustedSender`, règle pure dans `security-policy.js`) : il faut être le cadre principal de la fenêtre hôte, chargé depuis **exactement** l'`index.html` local. Une autre fenêtre, une webview ou une popup — même avec un preload qui aurait `ipcRenderer` — est refusée.
+- **Chaque canal IPC vérifie l'expéditeur** (`isTrustedSender`, règle pure dans `security-policy.js`) : il faut être le cadre principal de la fenêtre hôte, chargé depuis **exactement** `app://ovcr/index.html` (depuis la 1.9.0). Une autre fenêtre, une webview, une popup, le pont ou la même page ouverte en `file://` — même avec un preload qui aurait `ipcRenderer` — est refusée.
+- **Protocole `app://`** (depuis la 1.9.0, `app-protocol.js`) : l'interface a son **origine propre** (`app://ovcr`) au lieu de `file://`, partagée jusque-là avec n'importe quel fichier local (même localStorage, et `'self'` de la CSP couvrant en pratique tout `file://`). Le gestionnaire n'existe que sur la session de la fenêtre principale (les webviews ne le voient pas), n'accepte que GET et ne sert que la liste `ALLOWED` (`index.html`, `renderer/*.js`, `assets/icons.js`, polices, Monaco `min/vs`) : `main.js`, les preloads, le stockage, `package.json` répondent 404. Chemins décodés vérifiés, en-têtes `nosniff` et `no-store`. Privilèges du schéma : `standard`, `secure`, `supportFetchAPI` (worker de Monaco) ; ni CORS, ni service workers, ni contournement de la CSP.
 - Canaux ajoutés en phase 2, avec la même vérification :
   - `services:open-in-browser(url)` : n'ouvre dans le navigateur système qu'une URL **https** d'un domaine de `ALLOWED_POPUP_HOSTS` (refus et trace sinon) ;
   - `diag:report(payload)` : objet validé, textes tronqués (2 000 / 4 000 caractères), niveau « fatal » interdit, **60 rapports par minute** au plus ; tout est expurgé avant écriture ;
@@ -25,7 +27,7 @@
   - `diag:open-logs()` : aucun paramètre, ouvre le dossier **fixe** `userData/logs`.
 - Une erreur imprévue dans un canal est journalisée côté main ; l'interface ne reçoit qu'un message générique (`Erreur interne (<canal>)`), sans pile ni détail interne.
 - **Instance unique** (`app.requestSingleInstanceLock()`, sur le dossier de données) : deux instances n'écrivent jamais les mêmes fichiers en parallèle.
-- Navigation : la fenêtre hôte ne peut charger que son `index.html` ; elle ne peut ouvrir aucune fenêtre.
+- Navigation : la fenêtre hôte ne peut charger que `app://ovcr/index.html` (un retour vers l'ancienne adresse `file://` est bloqué) ; elle ne peut ouvrir aucune fenêtre.
 - Autorisations (position, micro, caméra, notifications…) : l'interface n'a que le presse-papiers (éditeur) et le plein écran.
 
 ### Content Security Policy
@@ -40,7 +42,7 @@ frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
 
 - **Aucun script inline, aucun `eval`** : tout le JS est dans des fichiers (`assets/icons.js`, `renderer/*.js`, Monaco), les boutons statiques passent par `data-cmd` au lieu de `onclick`.
 - `style-src 'unsafe-inline'` est conservé : attributs `style=""` de l'interface et balises `<style>` injectées par Monaco. Cela n'exécute aucun code.
-- Aucune connexion réseau depuis l'interface ; les `<webview>` ne sont pas des iframes et ne dépendent pas de `frame-src`.
+- `'self'` = `app://ovcr` depuis la 1.9.0. Aucune connexion réseau depuis l'interface (`connect-src 'self'` : seuls les fichiers de l'app, testé) ; les `<webview>` ne sont pas des iframes et ne dépendent pas de `frame-src`.
 - Monaco tourne sans `unsafe-eval`, avec ses web workers (`worker-src 'self'`).
 
 ### Binaire packagé : fuses Electron (depuis la 1.4.0)
@@ -54,7 +56,7 @@ Les fuses sont des octets écrits dans le `.exe` lui-même, lus par Electron ava
 | `EnableNodeCliInspectArguments` | désactivé | `--inspect` / `--inspect-brk` ignorés : pas de débogueur attachable au `.exe`. |
 | `EnableEmbeddedAsarIntegrityValidation` | activé | Refus de démarrer si l'en-tête d'`app.asar` ne correspond plus à l'empreinte inscrite dans le `.exe` (ressource `ELECTRONASAR`, écrite par `@electron/packager`), refus de lire un fichier de l'archive dont le contenu a changé. |
 | `OnlyLoadAppFromAsar` | activé | Un dossier `resources/app` posé à côté n'est pas chargé. |
-| `GrantFileProtocolExtraPrivileges` | **activé** (défaut) | Nécessaire tant que l'interface est en `file://` (chantier `app://`, voir §7). |
+| `GrantFileProtocolExtraPrivileges` | **activé** (défaut) | L'interface n'en a plus besoin depuis la 1.9.0 (`app://`), mais le **pont** vers l'ancien localStorage `file://` (§5) si : sans ce fuse, une page `file://` ne lit plus dans `app.asar` et n'a plus de localStorage (vérifié par `npm run test:fuses`). Le couper : voir §7. |
 | `EnableCookieEncryption` | **activé** depuis la 1.5.0 | Les cookies des sessions sont chiffrés sur le disque. Décision de l'utilisateur, **irréversible** : voir §5 « Cookies chiffrés ». |
 | `LoadBrowserProcessSpecificV8Snapshot`, `WasmTrapHandlers` | défauts d'Electron | Écrits explicitement : chaque fuse est décidé (une future version d'Electron qui en ajoute un fait échouer le build). |
 
@@ -89,7 +91,7 @@ Pas de liste blanche d'extensions : l'éditeur sert à du code de toute sorte (`
 | Comptes (noms, e-mails, profils, cooldowns) | `%APPDATA%\ai-manager\accounts.json` (+ `.bak`) | **chiffré** `safeStorage` (DPAPI : lisible seulement par ce compte Windows). Profil **neuf** : en clair quelques secondes, le temps que Chromium écrive la clé sur le disque (voir ci-dessous) |
 | Sauvegardes (`pre-migration-*`, `pre-schema-*`, `bak-preserved-*`, `pre-import-*`) | `%APPDATA%\ai-manager\backups\` | copies d'enveloppes : chiffrées de même ; jamais supprimées par l'app |
 | Autorisations des sites | `%APPDATA%\ai-manager\site-permissions.json` | en clair (origines + oui/non : rien de personnel) |
-| Préférences d'affichage (largeurs, cartes repliées) | `localStorage` | en clair (non sensibles) |
+| Préférences d'affichage (largeurs, cartes repliées) | `localStorage` de `app://ovcr` (depuis la 1.9.0 ; l'ancienne copie de l'origine `file://` est laissée) | en clair (non sensibles) |
 | Journal de diagnostic | `%APPDATA%\ai-manager\logs\ovcr*.log` (3 × 1 Mo max) | en clair, **expurgé** : e-mails masqués, URL réduites à l'hôte (pas de jeton OAuth), nom du compte Windows retiré des chemins ; ne contient que des identifiants techniques (id de compte, hôte, code d'erreur). Rien n'est envoyé : l'utilisateur copie le diagnostic s'il veut le partager. |
 | **Cookies / sessions des services IA** | `%APPDATA%\ai-manager\Partitions\<profil>\Network\Cookies` | **chiffrés** depuis la 1.5.0 (fuse `EnableCookieEncryption`, même DPAPI et même clé que `safeStorage`), **sauf** les cookies écrits en clair par une version antérieure et pas encore réécrits — voir ci-dessous |
 
@@ -108,13 +110,13 @@ Mesuré avec Electron 45.3.2 sur une app jetable (`npm run test:cookies`, 17 vé
 
 ### Migration depuis la 1.0.4 (automatique, une fois)
 
-Au premier lancement, le renderer transmet les anciennes clés `localStorage` (`ai_accounts`, `ai_accounts_backup`) au main, qui :
+Au premier lancement (aucun compte), l'interface demande au main les anciennes clés `localStorage` (`ai_accounts`, `ai_accounts_backup`) — depuis la 1.9.0, elles sont dans l'origine `file://` de l'ancienne interface et le main les lit par le **pont** (fenêtre cachée, page vide, clés autorisées seulement, `legacy-storage.js`) — puis les lui renvoie à migrer. Le main :
 
 1. écrit une **sauvegarde préalable** chiffrée de l'état d'origine dans `backups/` ;
 2. écrit `accounts.json` / `accounts.json.bak` (chaînes reprises telles quelles, même corrompues : la récupération par la sauvegarde reste possible) ;
 3. relit et compare ; en cas d'écart, annule.
 
-Le renderer n'efface les clés `localStorage` qu'après ce succès. Les cookies (`Partitions/`) ne sont **pas touchés** : les sessions restent connectées.
+Les clés `localStorage` ne sont effacées (par le main, via le pont) qu'après ce succès. Les cookies (`Partitions/`) ne sont **pas touchés** : les sessions restent connectées.
 
 ### Retour arrière (vers la 1.0.4)
 
@@ -122,7 +124,7 @@ Le renderer n'efface les clés `localStorage` qu'après ce succès. Les cookies 
 & ".\[OVCR] AI Manager.exe" --revert-storage-migration
 ```
 
-Les comptes **actuels** sont réécrits dans le `localStorage` au format 1.0.4, `accounts.json(.bak)` sont renommés en `*.reverted-<date>.json` (rien n'est supprimé), puis l'app se ferme : la 1.0.4 peut être relancée. Testé : la vraie 1.0.4 relit alors les comptes, y compris les modifications faites après la migration. **Depuis la 1.5.0**, la 1.0.4 ne relit plus les cookies chiffrés : les comptes reviennent, mais il faut se reconnecter à tous les services (voir « Cookies chiffrés »).
+Les comptes **actuels** sont réécrits par le main (pont, depuis la 1.9.0 : l'interface n'en reçoit plus le contenu) dans le `localStorage` de l'origine `file://` au format 1.0.4, puis, seulement si cette écriture a réussi, `accounts.json(.bak)` sont renommés en `*.reverted-<date>.json` (rien n'est supprimé), puis l'app se ferme : la 1.0.4 peut être relancée. Testé : la vraie 1.0.4 relit alors les comptes, y compris les modifications faites après la migration. **Depuis la 1.5.0**, la 1.0.4 ne relit plus les cookies chiffrés : les comptes reviennent, mais il faut se reconnecter à tous les services (voir « Cookies chiffrés »).
 
 ### Export / import des comptes (depuis la 1.8.0)
 
@@ -144,6 +146,7 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 - Les anciennes valeurs effacées du `localStorage` peuvent subsister quelque temps dans les fichiers internes de LevelDB (`Local Storage\leveldb\*.log`) jusqu'à leur compactage par Chromium.
 - Un **fichier exporté** est en clair : qui y accède lit les noms, e-mails et profils des comptes (pas les sessions). C'est à l'utilisateur de le ranger.
 - `style-src 'unsafe-inline'` dans la CSP (nécessaire à Monaco et aux styles en ligne).
+- Fuse `GrantFileProtocolExtraPrivileges` encore actif (1.9.0) : une page `file://` garde ses privilèges historiques (`fetch` en `file://`, service workers, accès universel entre cadres `file://`). Aucune n'est chargée hormis le pont (vide, sans preload), et la navigation de la fenêtre hôte comme la liste des sites l'empêchent. Coupure prévue : §7.
 - Exécutable non signé (SmartScreen). La vérification d'intégrité (1.4.0) protège `app.asar` contre une modification **isolée**, mais : elle ne couvre ni `app.asar.unpacked` (Monaco, chargé par l'interface), ni le `.exe` et les DLL ; et sans signature, rien n'empêche de remplacer **ensemble** le `.exe` et `app.asar` (ou d'inscrire une nouvelle empreinte). Comme pour `safeStorage`, cela ne protège pas d'un programme malveillant qui écrit déjà dans le dossier de l'app : la signature (§7) est le complément.
 - La liste `ALLOWED_POPUP_HOSTS` fait confiance à tous les sous-domaines de ses entrées (ex. `*.google.com`).
 - Un site autorisé peut toujours ouvrir des liens dans le navigateur système, mais au plus 5 par minute et par page depuis la 1.6.0.
@@ -152,4 +155,5 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 ## 7. Pistes pour la suite (non faites)
 
 - Signature de l'exécutable.
-- Protocole `app://` personnalisé à la place de `file://` (origine propre ; demanderait une migration du `localStorage` restant).
+- ~~Protocole `app://` personnalisé à la place de `file://`~~ : **fait en 1.9.0** (§2).
+- Couper `GrantFileProtocolExtraPrivileges` (« P5 bis », `PHASE-3.md`) une fois la 1.9.0 lancée sur chaque profil : demande de retirer le pont, le retour arrière vers la 1.0.4 et la migration directe depuis la 1.0.4.

@@ -78,6 +78,9 @@ ai-manager/
 ├── renderer/pane-errors.js # Messages d'erreur des panneaux IA (fonctions pures)
 ├── app-preload.js          # Pont minimal interface -> processus principal (window.ovcr)
 ├── main.js                 # Process principal Electron : instance unique, fenêtre, IPC validés, durcissement navigation/popups/webviews
+├── app-protocol.js         # Protocole app://ovcr de l'interface : fichiers servis (liste fermée), refus
+├── legacy-storage.js       # Pont vers l'ancien localStorage file:// (préférences, migration 1.0.4, retour arrière)
+├── legacy-bridge/          # Page vide du pont (aucun script)
 ├── security-policy.js      # Règles de sécurité pures (liste blanche, partitions, expéditeur IPC)
 ├── atomic-file.js          # Écriture atomique des fichiers de données
 ├── diagnostics.js          # Journal local expurgé + erreurs non interceptées
@@ -132,7 +135,7 @@ Les issues de sécurité sont bienvenues — merci de les signaler de façon res
 Projet maintenu en solo, contributions bienvenues — en particulier :
 
 - **Ajouter un service IA** (le pattern est entièrement data-driven) : une entrée dans `SERVICES`, des variables de couleur `--<id>`/`--<id>-dim` + une classe `.svc-<id>`, une fiche `SERVICE_INFO` pour la page d'aide, et si besoin le domaine d'auth dans `ALLOWED_POPUP_HOSTS` (`main.js`). La migration attache automatiquement le nouveau service aux comptes existants.
-- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : signature, protocole `app://`).
+- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : signature, coupure du fuse `GrantFileProtocolExtraPrivileges`).
 
 Règles du projet : JS vanilla sans dépendance nouvelle, toute donnée utilisateur passe par `escapeHtml()`, aucun script ni `onclick` inline (CSP), tout accès disque passe par une méthode dédiée de `window.ovcr` validée dans le processus principal, les écritures de comptes passent par `saveAccounts()`, les listes cliquables utilisent la délégation d'événements. Lisez `PROJECT_CONTEXT.md` avant une contribution non triviale. Fork → branche → pull request.
 

@@ -9,6 +9,27 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
+## Version 1.9.0 (interface en app://, phase 3 P5) — à valider
+
+La 1.9.0 ne charge plus l'interface en `file://` mais en `app://ovcr`. Son
+stockage local (préférences d'affichage) est donc neuf : au premier lancement,
+elle reprend celles de la 1.8.0. Le format des comptes ne change pas (retour à
+la 1.8.0 possible sans perte ; la 1.8.0 retrouve ses propres préférences).
+`npm run test:electron` et `npm run test:fuses` couvrent la reprise, la
+migration 1.0.4 et le retour arrière, mais **pas** le vrai `.exe` sur le vrai profil.
+
+- [ ] **Sauvegarde** : app fermée, copier `%APPDATA%\ai-manager` ailleurs.
+- [ ] **Avant** (avec la 1.8.0) : noter la largeur de l'éditeur et de l'explorateur, et quelles cartes de comptes sont repliées (au besoin, en replier une et élargir l'éditeur, puis fermer l'app).
+- [ ] **Démarrage** : lancer le `.exe` 1.9.0 sur le vrai profil : tous les comptes sont là, **aucun** bandeau d'alerte. `?` → « Diagnostic » indique **1.9.0**. Clic droit sur le `.exe` → Propriétés → Détails : version **1.9.0**.
+- [ ] **Préférences reprises** : mêmes largeurs d'éditeur et d'explorateur, mêmes cartes repliées qu'avec la 1.8.0.
+- [ ] **Préférences enregistrées** : changer une largeur et replier / déplier une carte, fermer, relancer : les changements sont gardés.
+- [ ] **Sessions** : ouvrir deux services sur deux comptes différents : toujours connectés (aucune reconnexion).
+- [ ] **Éditeur** : ouvrir l'éditeur (Monaco, coloration), choisir un dossier, ouvrir un fichier texte, le modifier, Ctrl+S ; copier / coller dans l'éditeur.
+- [ ] **Polices et icônes** : l'interface a son aspect habituel (polices, icônes des boutons).
+- [ ] **Export / import** : un export puis l'import du même fichier (« rien à importer ») fonctionnent toujours ; supprimer le fichier exporté.
+- [ ] **Diagnostic** : « Copier le diagnostic » fonctionne ; le journal (`logs\ovcr.log`) ne contient aucune ligne `[app://] refus` ni `[legacy-storage]`.
+- [ ] (Facultatif) **Retour à la 1.8.0** : fermer, lancer la 1.8.0 : comptes et sessions présents, ses anciennes préférences aussi ; puis revenir à la 1.9.0.
+
 ## Version 1.8.0 (export / import des comptes, phase 3 P7) — validée le 28/11/2026
 
 La 1.8.0 ajoute l'export et l'import de la liste des comptes (boutons de
