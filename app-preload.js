@@ -37,7 +37,11 @@ contextBridge.exposeInMainWorld('ovcr', {
   },
   storage: {
     pendingRevert: invoke('storage:pending-revert'),
-    confirmRevert: invoke('storage:confirm-revert')
+    confirmRevert: invoke('storage:confirm-revert'),
+    // Ancien localStorage file:// (versions <= 1.8.0), lu par le main (pont) :
+    // comptes d'une 1.0.4 non migrée, préférences d'affichage.
+    legacyAccounts: invoke('storage:legacy-accounts'),
+    legacyPrefs: invoke('storage:legacy-prefs')
   },
   sitePermissions: {
     reset: invoke('site-permissions:reset')

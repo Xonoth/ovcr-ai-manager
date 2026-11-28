@@ -34,9 +34,9 @@
   // Monaco en mode NAVIGATEUR : le loader AMD (loader.js) n'est injecté qu'au
   // premier besoin, puis charge editor.main par balises <script> locales (CSP
   // 'self'). Plus de conflit avec le require de Node : la page n'en a plus.
-  // URL ABSOLUE résolue depuis l'emplacement réel d'index.html : valable en dev
-  // ET dans le .exe packagé (index.html dans app.asar, Monaco dans
-  // app.asar.unpacked — Electron fait le lien de façon transparente).
+  // URL ABSOLUE résolue depuis l'adresse de l'interface (app://ovcr/index.html
+  // depuis la 1.9.0) : le protocole app:// lit les fichiers de Monaco là où ils
+  // sont (app.asar.unpacked dans le .exe packagé, via le fs d'Electron).
   function loadMonaco() {
     const vsBase = new URL('node_modules/monaco-editor/min/vs', window.location.href).href;
     const loader = document.createElement('script');

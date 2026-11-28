@@ -4,22 +4,30 @@
 
 const path = require('path');
 const fs = require('fs');
-const { scenario, plainEnvelope, sampleAccount } = require('./harness');
+const { scenario, plainEnvelope, sampleAccount, openOldFilePage } = require('./harness');
 const fx = require('../fixtures/legacy-1.0.4');
 
 const mode = process.env.OVCR_SCENARIO || 'legacy';
 
 if (mode === 'legacy') {
-  scenario('Versions : migration 1.0.4 (localStorage) -> stockage chiffré', {}, async ({ win, js, check, userData, waitFor, consoleErrors }) => {
-    // État d'un profil 1.0.4 : comptes dans le localStorage, aucun fichier.
-    await js(`localStorage.setItem('ai_accounts', ${JSON.stringify(fx.ai_accounts)});
+  scenario('Versions : migration 1.0.4 (localStorage file://) -> stockage chiffré', {}, async ({ win, js, check, userData, waitFor, consoleErrors, tmp }) => {
+    // État d'un profil 1.0.4 : comptes dans le localStorage de l'origine
+    // file:// (l'interface 1.0.4 était une page file://), aucun fichier ; et
+    // rien encore dans celui de app://ovcr (premier lancement de la 1.9.0).
+    const old = await openOldFilePage(tmp);
+    await old.js(`localStorage.setItem('ai_accounts', ${JSON.stringify(fx.ai_accounts)});
               localStorage.setItem('ai_accounts_backup', ${JSON.stringify(fx.ai_accounts_backup)});
               localStorage.setItem('ide_w', 'n\\'importe quoi'); true`);
+    await js('localStorage.clear(); true');
     win.webContents.reload();
     await new Promise(r => win.webContents.once('did-finish-load', r));
     await waitFor(() => js('document.querySelectorAll(".account-card").length === 3'), 10000, '3 comptes migrés');
     check('3 comptes 1.0.4 affichés après migration', true);
-    check('ancienne copie en clair effacée du localStorage', await js('localStorage.getItem("ai_accounts") === null && localStorage.getItem("ai_accounts_backup") === null'));
+    await waitFor(() => old.js('localStorage.getItem("ai_accounts") === null'), 5000, 'effacement').catch(() => false);
+    check('ancienne copie en clair effacée du localStorage file://', await old.js('localStorage.getItem("ai_accounts") === null && localStorage.getItem("ai_accounts_backup") === null'));
+    check('aucune copie des comptes dans le localStorage de app://', await js('localStorage.getItem("ai_accounts") === null && localStorage.getItem("ai_accounts_backup") === null'));
+    check('ancienne préférence reprise (puis ignorée car invalide)', await js('localStorage.getItem("ide_w")') === 'n\'importe quoi');
+    old.close();
     const envl = JSON.parse(fs.readFileSync(path.join(userData, 'accounts.json'), 'utf8'));
     check('fichier chiffré écrit', envl.encryption === 'safeStorage', envl.encryption);
     check('schéma enregistré dans l\'enveloppe', envl.schema === 1, envl.schema);

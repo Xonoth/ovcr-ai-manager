@@ -28,6 +28,8 @@ const SCENARIOS = [
   ['storage-revert.js', { OVCR_SCENARIO: 'revert' }],
   ['storage-revert.js', { OVCR_SCENARIO: 'nothing' }],
   ['legacy-bridge.js'],
+  ['upgrade-1.8.js', { OVCR_SCENARIO: 'prefs' }],
+  ['upgrade-1.8.js', { OVCR_SCENARIO: 'bridge-down' }],
   ['accounts-transfer.js'],
   ['diagnostics.js'],
   ['webview-errors.js'],

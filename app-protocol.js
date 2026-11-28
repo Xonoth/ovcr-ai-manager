@@ -25,10 +25,13 @@ const APP_ORIGIN = APP_SCHEME + '://' + APP_HOST;
 const INDEX_URL = APP_ORIGIN + '/index.html';
 
 // Privilèges du schéma (protocol.registerSchemesAsPrivileged) : « standard »
-// (URL relatives, origine propre, localStorage) et « secure » (contexte
-// sécurisé, comme https). Rien d'autre : pas de fetch, pas de CORS, pas de
-// service workers.
-const SCHEME_PRIVILEGES = Object.freeze({ standard: true, secure: true });
+// (URL relatives, origine propre, localStorage), « secure » (contexte
+// sécurisé, comme https) et « supportFetchAPI » : le worker de Monaco charge
+// ses textes par fetch (en file://, c'était permis par le fuse
+// GrantFileProtocolExtraPrivileges). Ces requêtes restent limitées par la CSP
+// (connect-src 'self' = app://ovcr) et par la liste ALLOWED ci-dessous. Pas de
+// CORS, pas de service workers, pas de contournement de la CSP.
+const SCHEME_PRIVILEGES = Object.freeze({ standard: true, secure: true, supportFetchAPI: true });
 
 // Fichiers servis : chemins relatifs à la racine de l'app, en barres obliques.
 const ALLOWED = Object.freeze([

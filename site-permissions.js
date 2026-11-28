@@ -13,16 +13,19 @@
 //     gestion des fenêtres, verrouillage clavier/souris, système de fichiers…).
 // Les choix « mémorisés » valent pour un SITE (origine), tous comptes
 // confondus, et sont stockés dans <userData>/site-permissions.json.
-// L'interface locale de l'app (file://) ne reçoit que le strict nécessaire
-// (presse-papiers de l'éditeur, plein écran) : elle n'a besoin ni de la
-// position, ni du micro, ni de la caméra, ni des notifications.
+// L'interface locale de l'app (app://ovcr depuis la 1.9.0, phase 3 P5) ne
+// reçoit que le strict nécessaire (presse-papiers de l'éditeur, plein écran) :
+// elle n'a besoin ni de la position, ni du micro, ni de la caméra, ni des
+// notifications. Une page file:// (le pont vers l'ancien localStorage,
+// legacy-storage.js) ne reçoit RIEN.
 
 const { BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { writeAtomicTextSync, fileStamp } = require('./atomic-file');
+const { APP_SCHEME, APP_HOST, APP_ORIGIN } = require('./app-protocol');
 
-// Autorisations de l'interface locale (file://).
+// Autorisations de l'interface locale (app://ovcr).
 const APP_UI_ALLOW = new Set(['clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
 
 const ALWAYS_ALLOW = new Set([
@@ -111,10 +114,15 @@ function save() {
   }
 }
 
+// Origine d'une demande. Node ne connaît pas le schéma app:// (enregistré
+// seulement dans Chromium) : son origine est reconstruite ici. Origine opaque
+// (« null ») ou hôte app:// inconnu : null (refusé).
 function originOf(urlStr) {
   try {
     const u = new URL(urlStr);
-    return u.protocol === 'file:' ? 'file://' : u.origin;
+    if (u.protocol === 'file:') return 'file://';
+    if (u.protocol === APP_SCHEME + ':') return u.host === APP_HOST ? APP_ORIGIN : null;
+    return u.origin === 'null' ? null : u.origin;
   } catch (_) {
     return null;
   }
@@ -186,7 +194,8 @@ async function ask(webContents, origin, keys) {
 
 async function decide(webContents, permission, details) {
   const origin = originOf((details && (details.securityOrigin || details.requestingUrl)) || webContents.getURL());
-  if (origin === 'file://') return APP_UI_ALLOW.has(permission); // interface locale de l'app
+  if (origin === APP_ORIGIN) return APP_UI_ALLOW.has(permission); // interface locale de l'app
+  if (origin === 'file://') return false;                         // pont vers l'ancien localStorage
   if (ALWAYS_ALLOW.has(permission)) return true;
   if (!origin) return false;
 
@@ -219,7 +228,8 @@ function installOn(ses) {
   //   - permission non prévue -> "non".
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     const origin = originOf(requestingOrigin);
-    if (origin === 'file://') return APP_UI_ALLOW.has(permission);
+    if (origin === APP_ORIGIN) return APP_UI_ALLOW.has(permission);
+    if (origin === 'file://') return false;
     if (ALWAYS_ALLOW.has(permission)) return true;
     if (!origin) return false;
     let keys;

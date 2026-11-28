@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
 const path = require('path');
 
 // On fixe le dossier de données (comptes + sessions IA) sur "ai-manager" quel que
@@ -54,6 +54,23 @@ process.on('unhandledRejection', (reason) => {
 // popups), quelles que soient leurs webPreferences. À appeler avant app.ready.
 app.enableSandbox();
 
+// ===== Protocole de l'interface (phase 3, P5) =====
+// L'interface est servie en app://ovcr/index.html (et non plus en file://) :
+// origine propre, CSP 'self' limitée aux fichiers de l'app, localStorage à
+// elle. Le schéma doit être déclaré avant app.ready ; le gestionnaire n'est
+// installé que sur la session de la fenêtre principale (app.whenReady plus
+// bas) : les webviews (partitions persist:<profil>) ne le voient pas.
+// Fichiers servis et refus : app-protocol.js.
+const appProtocol = require('./app-protocol');
+protocol.registerSchemesAsPrivileged([{ scheme: appProtocol.APP_SCHEME, privileges: { ...appProtocol.SCHEME_PRIVILEGES } }]);
+
+// Pont vers le localStorage de l'ANCIENNE origine file:// (préférences des
+// versions <= 1.8.0, comptes d'une 1.0.4 non migrée, retour arrière vers la
+// 1.0.4). Fenêtre cachée, sans script ni preload : voir legacy-storage.js.
+// ⚠️ Exige le fuse GrantFileProtocolExtraPrivileges actif (scripts/fuses.js).
+const legacyStorage = require('./legacy-storage');
+const legacyBridge = legacyStorage.createLegacyStorageBridge({ BrowserWindow, log: (m) => console.warn(m) });
+
 // ===== Identité navigateur des panneaux IA (connexion Google) =====
 // Sans ça, Google refuse la connexion (« Ce navigateur ou cette application ne
 // sont peut-être pas sécurisés »). Le module donne une identité cohérente :
@@ -77,13 +94,13 @@ const fsp = require('fs').promises;
 const policy = require('./security-policy');
 const { isAllowedPopup, isAllowedWebviewSrc, isValidPartition, hostOf } = policy;
 
-const INDEX_PATH = path.join(__dirname, 'index.html');
+const INDEX_URL = appProtocol.INDEX_URL;
 const PRELOAD_PATH = path.join(__dirname, 'app-preload.js');
 let mainWindow = null;
 
 // ===== Durcissement navigation / popups (chantier B) =====
 // Liste blanche des origines et règles pures : voir security-policy.js.
-const isAppIndexUrl = (urlStr) => policy.isAppIndexUrl(urlStr, INDEX_PATH);
+const isAppIndexUrl = (urlStr) => policy.isAppIndexUrl(urlStr);
 
 // Limite des liens ouverts dans le navigateur système, par page (F4).
 const externalOpenLimiters = new WeakMap();
@@ -142,8 +159,8 @@ function createWindow() {
   win.on('closed', () => { if (mainWindow === win) mainWindow = null; });
 
   // --- 1. La fenêtre HÔTE ne doit JAMAIS naviguer ailleurs que vers son
-  // index.html local (rechargement compris) : c'est la seule page à qui le
-  // preload donne accès aux fichiers et aux comptes.
+  // interface (app://ovcr/index.html, rechargement compris) : c'est la seule
+  // page à qui le preload donne accès aux fichiers et aux comptes.
   win.webContents.on('will-navigate', (event, url) => {
     if (!isAppIndexUrl(url)) {
       event.preventDefault();
@@ -190,14 +207,14 @@ function createWindow() {
       cancelId: 1,
       noLink: true
     }).then(({ response }) => {
-      if (response === 0 && !win.isDestroyed()) win.loadFile(INDEX_PATH);
+      if (response === 0 && !win.isDestroyed()) win.loadURL(INDEX_URL);
       else app.quit();
     }).catch(err => console.error('[app] boîte de dialogue impossible :', err.message));
   });
   win.on('unresponsive', () => console.warn('[app] l\'interface ne répond plus'));
   win.on('responsive', () => console.log('[app] l\'interface répond de nouveau'));
 
-  win.loadFile(INDEX_PATH);
+  win.loadURL(INDEX_URL);
 }
 
 // Webviews et popups : filtrage des popups, et interdiction d'imbriquer des
@@ -297,10 +314,11 @@ function describeNetError(code, desc) {
 
 // ===== IPC =====
 // Chaque canal est dédié à UNE opération et n'accepte que des appels venant
-// de la page principale de la fenêtre hôte, chargée depuis l'index.html
-// local. Les webviews/popups (sites distants) ne peuvent rien appeler.
+// de la page principale de la fenêtre hôte, chargée depuis l'interface
+// (app://ovcr/index.html). Les webviews/popups (sites distants) et le pont
+// file:// ne peuvent rien appeler.
 
-const isTrustedSender = (event) => policy.isTrustedSender(event, mainWindow, INDEX_PATH);
+const isTrustedSender = (event) => policy.isTrustedSender(event, mainWindow);
 
 function handle(channel, fn) {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -412,7 +430,26 @@ handle('accounts:restore-backup', () => accountsStore.restoreBackup().then(res =
   if (res.ok) rememberStorageState(res.result);
   return res;
 }));
-handle('accounts:migrate-legacy', (payload) => accountsStore.migrateLegacy(payload));
+// Migration depuis la 1.0.4 : l'interface lit l'ancienne copie en clair par
+// le pont (storage:legacy-accounts), la fait migrer ici, et seulement après un
+// succès vérifié (copie chiffrée + sauvegarde dans backups/) le main l'efface.
+handle('accounts:migrate-legacy', async (payload) => {
+  const res = await accountsStore.migrateLegacy(payload);
+  if (res && res.ok) {
+    await legacyBridge.remove([...legacyStorage.LEGACY_ACCOUNT_KEYS])
+      .then(() => console.log('[storage] ancienne copie en clair effacée (localStorage file://)'))
+      .catch(err => console.warn('[storage] ancienne copie en clair non effacée (sera ignorée) :', err.message));
+  }
+  return res;
+});
+
+// Lecture de l'ancien localStorage file:// (phase 3, P5) : seulement les clés
+// de legacy-storage.js, jamais d'écriture depuis l'interface.
+handle('storage:legacy-accounts', async () => {
+  const r = await legacyBridge.read([...legacyStorage.LEGACY_ACCOUNT_KEYS]);
+  return { current: r.ai_accounts, backup: r.ai_accounts_backup };
+});
+handle('storage:legacy-prefs', () => legacyBridge.read([...legacyStorage.LEGACY_PREF_KEYS]));
 
 // Export / import des comptes (phase 3, P7). L'interface ne choisit JAMAIS de
 // chemin : les boîtes « Enregistrer sous » / « Ouvrir » sont ouvertes ici, et
@@ -490,8 +527,27 @@ handle('accounts:import-apply', async (token, mode) => {
 handle('accounts:import-cancel', () => { pendingImport = null; return true; });
 
 // Retour arrière de la migration (lancement avec --revert-storage-migration).
-handle('storage:pending-revert', () => accountsStore.pendingRevert());
+// Depuis la 1.9.0, c'est le main qui réécrit les comptes au format 1.0.4 dans
+// le localStorage file:// (pont), là où la 1.0.4 les cherche ; l'interface
+// n'en reçoit plus le contenu. Fichiers chiffrés mis de côté seulement si
+// cette écriture a réussi.
+handle('storage:pending-revert', async () => {
+  const r = await accountsStore.pendingRevert();
+  return r && (r.ok ? { ok: true } : r);
+});
 handle('storage:confirm-revert', async () => {
+  const pending = await accountsStore.pendingRevert();
+  if (!pending) return { ok: false, error: 'not_requested' };
+  if (!pending.ok) return pending;
+  const entries = {};
+  if (pending.current != null) entries.ai_accounts = pending.current;
+  if (pending.backup != null) entries.ai_accounts_backup = pending.backup;
+  if (Object.keys(entries).length) {
+    try { await legacyBridge.write(entries); } catch (err) {
+      console.error('[storage] retour arrière : écriture au format 1.0.4 impossible :', err.message);
+      return { ok: false, error: 'legacy_write' };
+    }
+  }
   const r = await accountsStore.confirmRevert();
   if (r.ok) {
     setTimeout(async () => {
@@ -503,7 +559,7 @@ handle('storage:confirm-revert', async () => {
           + 'Les fichiers chiffrés ont été mis de côté dans le dossier de données (rien n\'a été supprimé).'
       }).catch(err => console.warn('[storage] boîte de dialogue impossible :', err.message));
       app.quit();
-    }, 300); // laisse au renderer le temps d'écrire son localStorage
+    }, 300); // laisse à l'interface le temps d'afficher son message
   }
   return r;
 });
@@ -530,6 +586,12 @@ app.whenReady().then(() => {
   // Profil neuf : crée tout de suite la clé de chiffrement, pour qu'elle soit
   // sur le disque avant le premier enregistrement (voir accounts-store.js).
   accountsStore.prepareKey().catch(err => console.warn('[accounts] préparation de la clé impossible :', err.message));
+  // Interface servie en app:// (session par défaut = celle de la fenêtre principale).
+  protocol.handle(appProtocol.APP_SCHEME, appProtocol.createAppProtocolHandler({
+    appRoot: __dirname,
+    readFile: fsp.readFile,
+    log: (m) => console.warn(m)
+  }));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

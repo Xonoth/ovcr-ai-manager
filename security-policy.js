@@ -4,8 +4,7 @@
 // logique est IDENTIQUE à celle de la phase 1 : ne pas l'assouplir ici sans
 // mettre à jour SECURITY.md et les tests (test/unit/security-policy.test.js).
 
-const path = require('path');
-const { fileURLToPath } = require('url');
+const appProtocol = require('./app-protocol');
 
 // Origines de confiance : les 9 services + les fournisseurs d'identité courants.
 // Sert à deux choses :
@@ -62,29 +61,21 @@ function hostOf(urlStr) {
   try { return new URL(urlStr).host; } catch (_) { return '(url illisible)'; }
 }
 
-function samePath(a, b) {
-  const ra = path.resolve(a), rb = path.resolve(b);
-  return process.platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
-}
-
-// L'URL est-elle exactement l'index.html local de l'app (hash/query ignorés) ?
-function isAppIndexUrl(urlStr, indexPath) {
-  try {
-    const u = new URL(urlStr);
-    return u.protocol === 'file:' && samePath(fileURLToPath(u), indexPath);
-  } catch (_) {
-    return false;
-  }
+// L'URL est-elle exactement l'interface de l'app (hash/query ignorés) ?
+// Depuis la 1.9.0 (phase 3, P5) : app://ovcr/index.html (app-protocol.js).
+// L'ancienne adresse file://…/index.html n'est PLUS reconnue.
+function isAppIndexUrl(urlStr) {
+  return appProtocol.isAppIndexUrl(urlStr);
 }
 
 // Un appel IPC n'est accepté que du cadre PRINCIPAL de la fenêtre hôte,
-// chargé depuis exactement l'index.html local.
-function isTrustedSender(event, mainWindow, indexPath) {
+// chargé depuis exactement l'interface (app://ovcr/index.html).
+function isTrustedSender(event, mainWindow) {
   const frame = event && event.senderFrame;
   return !!mainWindow && !mainWindow.isDestroyed()
     && event.sender === mainWindow.webContents
     && !!frame && !frame.parent
-    && isAppIndexUrl(frame.url, indexPath);
+    && isAppIndexUrl(frame.url);
 }
 
 // Liens hors liste ouverts dans le navigateur système par un site autorisé
@@ -121,7 +112,6 @@ module.exports = {
   isAllowedWebviewSrc,
   isValidPartition,
   hostOf,
-  samePath,
   isAppIndexUrl,
   isTrustedSender
 };

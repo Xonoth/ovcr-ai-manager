@@ -17,6 +17,10 @@
 // waitForList  : false = ne pas attendre l'affichage de la liste des comptes
 //                (page qui ne l'affiche jamais, ex. retour arrière) ;
 // t            : { win, js, check, userData, delay, waitFor, consoleErrors, tmp }.
+//
+// openOldFilePage(dir) : page file:// jetable, cachée, qui joue l'ANCIENNE
+// interface (versions <= 1.8.0, servies en file://) : toutes les pages file://
+// partagent le même localStorage. Renvoie { js(code), close() }.
 
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('child_process');
@@ -115,4 +119,15 @@ function scenario(name, opts, body) {
   });
 }
 
-module.exports = { scenario, plainEnvelope, sampleAccount, ROOT, delay, waitFor };
+async function openOldFilePage(dir) {
+  const file = path.join(dir, 'ancienne-interface.html');
+  fs.writeFileSync(file, '<!doctype html><meta charset="utf-8"><title>ancienne interface</title>');
+  const w = new BrowserWindow({ show: false });
+  await w.loadFile(file);
+  return {
+    js: code => w.webContents.executeJavaScript(code, true),
+    close: () => { if (!w.isDestroyed()) w.destroy(); }
+  };
+}
+
+module.exports = { scenario, plainEnvelope, sampleAccount, ROOT, delay, waitFor, openOldFilePage };

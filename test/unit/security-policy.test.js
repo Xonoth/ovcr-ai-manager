@@ -42,20 +42,20 @@ test('hostOf : ne renvoie que l\'hôte (jamais les jetons en query string)', () 
   assert.equal(policy.hostOf('n\'importe quoi'), '(url illisible)');
 });
 
-const INDEX = path.resolve(__dirname, '..', '..', 'index.html');
-const indexUrl = pathToFileURL(INDEX).href;
+const indexUrl = 'app://ovcr/index.html';
+const oldIndexUrl = pathToFileURL(path.resolve(__dirname, '..', '..', 'index.html')).href;
 
-test('isAppIndexUrl : exactement l\'index.html local (hash/query ignorés)', () => {
-  assert.equal(policy.isAppIndexUrl(indexUrl, INDEX), true);
-  assert.equal(policy.isAppIndexUrl(indexUrl + '#x?y=1', INDEX), true);
-  assert.equal(policy.isAppIndexUrl(pathToFileURL(path.join(path.dirname(INDEX), 'autre.html')).href, INDEX), false);
-  assert.equal(policy.isAppIndexUrl('https://claude.ai/', INDEX), false);
-  assert.equal(policy.isAppIndexUrl('file:///C:/Windows/index.html', INDEX), false);
+test('isAppIndexUrl : exactement app://ovcr/index.html (hash/query ignorés)', () => {
+  assert.equal(policy.isAppIndexUrl(indexUrl), true);
+  assert.equal(policy.isAppIndexUrl(indexUrl + '#x?y=1'), true);
+  assert.equal(policy.isAppIndexUrl('app://ovcr/autre.html'), false);
+  assert.equal(policy.isAppIndexUrl('app://autre/index.html'), false);
+  assert.equal(policy.isAppIndexUrl('https://claude.ai/'), false);
+  assert.equal(policy.isAppIndexUrl('file:///C:/Windows/index.html'), false);
 });
 
-test('isAppIndexUrl : chemin avec [ ], espaces et accents (dossier packagé)', () => {
-  const odd = path.resolve('C:\\Program Files\\[OVCR] AI Manager é\\resources\\app.asar\\index.html');
-  assert.equal(policy.isAppIndexUrl(pathToFileURL(odd).href, odd), true);
+test('isAppIndexUrl : l\'ancienne adresse file:// de l\'interface n\'est plus reconnue (P5)', () => {
+  assert.equal(policy.isAppIndexUrl(oldIndexUrl), false);
 });
 
 function fakeWindow() {
@@ -63,17 +63,18 @@ function fakeWindow() {
   return { webContents, isDestroyed: () => false };
 }
 
-test('isTrustedSender : seul le cadre principal de la fenêtre hôte, sur index.html', () => {
+test('isTrustedSender : seul le cadre principal de la fenêtre hôte, sur l\'interface app://', () => {
   const win = fakeWindow();
   const ok = { sender: win.webContents, senderFrame: { parent: null, url: indexUrl } };
-  assert.equal(policy.isTrustedSender(ok, win, INDEX), true);
+  assert.equal(policy.isTrustedSender(ok, win), true);
 
-  assert.equal(policy.isTrustedSender({ ...ok, sender: {} }, win, INDEX), false, 'autre webContents (webview, popup)');
-  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: { parent: {}, url: indexUrl } }, win, INDEX), false, 'sous-cadre');
-  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: { parent: null, url: 'https://claude.ai/' } }, win, INDEX), false, 'page distante');
-  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: null }, win, INDEX), false, 'cadre détruit');
-  assert.equal(policy.isTrustedSender(ok, null, INDEX), false, 'pas de fenêtre');
-  assert.equal(policy.isTrustedSender(ok, { ...win, isDestroyed: () => true }, INDEX), false, 'fenêtre détruite');
+  assert.equal(policy.isTrustedSender({ ...ok, sender: {} }, win), false, 'autre webContents (webview, popup, pont file://)');
+  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: { parent: {}, url: indexUrl } }, win), false, 'sous-cadre');
+  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: { parent: null, url: 'https://claude.ai/' } }, win), false, 'page distante');
+  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: { parent: null, url: oldIndexUrl } }, win), false, 'ancienne interface file://');
+  assert.equal(policy.isTrustedSender({ ...ok, senderFrame: null }, win), false, 'cadre détruit');
+  assert.equal(policy.isTrustedSender(ok, null), false, 'pas de fenêtre');
+  assert.equal(policy.isTrustedSender(ok, { ...win, isDestroyed: () => true }), false, 'fenêtre détruite');
 });
 
 test('F4 — limite des liens externes : 5 par minute et par page, fenêtre glissante', () => {

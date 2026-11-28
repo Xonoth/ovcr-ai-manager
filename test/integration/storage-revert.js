@@ -13,10 +13,20 @@
 const path = require('path');
 const fs = require('fs');
 const { app, dialog } = require('electron');
-const { scenario, plainEnvelope, sampleAccount, waitFor } = require('./harness');
+const { scenario, plainEnvelope, sampleAccount, waitFor, openOldFilePage } = require('./harness');
 
 const mode = process.env.OVCR_SCENARIO || 'revert';
 const calls = { dialog: 0, quit: 0 };
+
+// Réponses de storage:pending-revert réellement renvoyées à l'interface :
+// ipcMain.handle est enveloppé AVANT le chargement de main.js (dans seed).
+const pendingReplies = [];
+function recordPendingRevertReplies() {
+  const { ipcMain } = require('electron');
+  const original = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, fn) => original(channel, channel !== 'storage:pending-revert' ? fn
+    : async (...args) => { const r = await fn(...args); pendingReplies.push(r); return r; });
+}
 
 function fakeQuitAndDialog() {
   dialog.showMessageBox = async () => { calls.dialog++; return { response: 0 }; };
@@ -29,13 +39,19 @@ if (mode === 'revert') {
     seed(dir) {
       process.argv.push('--revert-storage-migration');
       fs.writeFileSync(path.join(dir, 'accounts.json'), plainEnvelope([sampleAccount(1), sampleAccount(2)]));
+      recordPendingRevertReplies();
     },
     beforeWindow: fakeQuitAndDialog
-  }, async ({ js, check, userData, consoleErrors }) => {
+  }, async ({ js, check, userData, consoleErrors, tmp }) => {
     await waitFor(() => js('/Comptes réécrits au format 1\\.0\\.4/.test(document.body.textContent)'), 10000, 'message du retour arrière').catch(() => false);
     check('message « Comptes réécrits au format 1.0.4. Fermeture… »', await js('document.body.textContent.includes("Comptes réécrits au format 1.0.4. Fermeture…")'));
-    const legacy = JSON.parse(await js('localStorage.getItem("ai_accounts")') || 'null');
-    check('comptes réécrits dans le localStorage (clé 1.0.4 ai_accounts)', Array.isArray(legacy) && legacy.map(a => a.id).join() === 'acc_1,acc_2', legacy);
+    // Là où la 1.0.4 les cherche : le localStorage de l'origine file://.
+    const old = await openOldFilePage(tmp);
+    const legacy = JSON.parse(await old.js('localStorage.getItem("ai_accounts")') || 'null');
+    check('comptes réécrits dans le localStorage file:// (clé 1.0.4 ai_accounts)', Array.isArray(legacy) && legacy.map(a => a.id).join() === 'acc_1,acc_2', legacy);
+    old.close();
+    check('aucune copie des comptes dans le localStorage de app://', await js('localStorage.getItem("ai_accounts") === null'));
+    check('l\'interface ne reçoit plus le contenu des comptes', JSON.stringify(pendingReplies) === '[{"ok":true}]', pendingReplies);
     check('aucune liste de comptes construite', await js('!document.getElementById("accountsList")'));
     check('démarrage arrêté avant les préférences (prefs_schema non écrit)', await js('localStorage.getItem("prefs_schema") === null'));
     await waitFor(() => calls.quit > 0, 5000, 'fermeture').catch(() => false);

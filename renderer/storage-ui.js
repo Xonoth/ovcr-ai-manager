@@ -24,13 +24,20 @@
     // La liste des comptes est tenue par le processus principal (accounts-store.js),
     // chiffrée avec safeStorage, avec une génération de sauvegarde avant chaque
     // écrasement. Le renderer ne garde que la copie de travail en mémoire.
-    // Anciennes clés localStorage de la 1.0.4 (migrées puis effacées au 1er lancement).
-    const LEGACY_STORE_KEY = 'ai_accounts';
-    const LEGACY_BACKUP_KEY = 'ai_accounts_backup';
-
-    function legacyGet(key) {
-      try { return localStorage.getItem(key); }
-      catch (e) { console.warn('[storage] localStorage illisible :', e.message); return null; }
+    // Anciennes clés localStorage de la 1.0.4 (ai_accounts, ai_accounts_backup),
+    // migrées puis effacées au 1er lancement. Depuis la 1.9.0 (phase 3, P5),
+    // l'interface est en app://ovcr : ces clés restent dans le localStorage de
+    // l'ancienne origine file://, que seul le main sait lire (pont,
+    // legacy-storage.js). Illisible : comme s'il n'y avait rien (rien n'est
+    // effacé, la migration sera retentée au prochain lancement).
+    async function readLegacyAccounts() {
+      try {
+        const r = await api.storage.legacyAccounts();
+        return { current: r && typeof r.current === 'string' ? r.current : null, backup: r && typeof r.backup === 'string' ? r.backup : null };
+      } catch (e) {
+        console.warn('[storage] ancien localStorage file:// illisible :', e.message);
+        return { current: null, backup: null };
+      }
     }
 
     // Enregistre la liste de comptes. L'envoi est IMMÉDIAT et porte un
@@ -133,9 +140,10 @@
 
     // Renvoie true si le démarrage doit s'arrêter (retour arrière effectué).
     async function handlePendingRevert() {
-      // Retour arrière demandé (lancement avec --revert-storage-migration) : on
-      // réécrit les comptes dans le localStorage au format 1.0.4, le processus
-      // principal met ses fichiers de côté puis ferme l'app.
+      // Retour arrière demandé (lancement avec --revert-storage-migration) : le
+      // processus principal réécrit les comptes au format 1.0.4 dans le
+      // localStorage file:// (pont, depuis la 1.9.0), met ses fichiers de côté
+      // puis ferme l'app. L'interface n'affiche que le résultat.
       const revert = await api.storage.pendingRevert().catch(e => {
         console.error('[storage] vérification du retour arrière impossible :', e);
         return null;
@@ -143,8 +151,6 @@
       if (revert) {
         if (revert.ok) {
           try {
-            if (revert.current != null) localStorage.setItem(LEGACY_STORE_KEY, revert.current);
-            if (revert.backup != null) localStorage.setItem(LEGACY_BACKUP_KEY, revert.backup);
             const done = await api.storage.confirmRevert();
             document.body.innerHTML = '<div style="margin:auto; padding:32px; font-family:sans-serif; color:#ece6f4;">'
               + (done && done.ok ? 'Comptes réécrits au format 1.0.4. Fermeture…' : 'Retour arrière impossible : ' + escapeHtml(done && done.error)) + '</div>';
@@ -165,15 +171,12 @@
         state.loadResult = await api.accounts.load();
         // Premier lancement après la 1.0.4 : migration depuis le localStorage.
         if (state.loadResult.status === 'empty') {
-          const legacy = legacyGet(LEGACY_STORE_KEY);
-          const legacyBackup = legacyGet(LEGACY_BACKUP_KEY);
+          const { current: legacy, backup: legacyBackup } = await readLegacyAccounts();
           if (legacy != null || legacyBackup != null) {
             const m = await api.accounts.migrateLegacy({ current: legacy, backup: legacyBackup });
             if (m && m.ok) {
               // Copie chiffrée vérifiée côté main (+ sauvegarde préalable dans
-              // backups/) : la copie en clair peut disparaître.
-              try { localStorage.removeItem(LEGACY_STORE_KEY); localStorage.removeItem(LEGACY_BACKUP_KEY); }
-              catch (e) { console.warn('[storage] ancienne copie en clair non effacée (sera ignorée) :', e.message); }
+              // backups/) : le main a effacé la copie en clair.
               console.log('[storage] comptes migrés depuis localStorage (chiffrement : ' + m.encrypted + ')');
               state.loadResult = await api.accounts.load();
             } else {

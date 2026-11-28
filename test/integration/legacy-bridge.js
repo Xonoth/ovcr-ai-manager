@@ -37,18 +37,21 @@ scenario('Pont file:// : lecture, écriture, effacement de l\'ancien localStorag
   const oldJs = code => old.webContents.executeJavaScript(code);
   await oldJs(`localStorage.setItem('ai_accounts', '[{"id":"acc_1"}]'); localStorage.setItem('ide_w', '412px'); localStorage.setItem('autre', 'garde'); true`);
 
-  // L'interface actuelle (encore en file:// avant le lot 2) a écrit ses préférences.
+  // L'interface (app://ovcr depuis la 1.9.0) a son propre localStorage.
   const uiProtocol = await js('location.protocol');
-  check('interface en file:// (avant le passage à app://)', uiProtocol === 'file:', uiProtocol);
+  check('interface en app://', uiProtocol === 'app:', uiProtocol);
+  await js(`localStorage.setItem('explorer_w', '199px'); true`);
 
   const read = await bridge.read([...LS.LEGACY_KEYS]);
   check('lecture : valeurs écrites par une autre page file://', read.ai_accounts === '[{"id":"acc_1"}]' && read.ide_w === '412px', read);
   check('lecture : clé absente -> null', read.ai_accounts_backup === null && read.explorer_w === null, read);
-  check('lecture : préférences de l\'interface file:// visibles', read.prefs_schema === '1', read);
+  check('lecture : stockage de l\'interface app:// invisible depuis le pont', read.explorer_w === null && read.prefs_schema === null, read);
+  check('lecture : stockage file:// invisible depuis l\'interface app://', await js('localStorage.getItem("ide_w") === null && localStorage.getItem("ai_accounts") === null'));
   check('lecture : seulement les clés demandées', Object.keys(read).sort().join() === [...LS.LEGACY_KEYS].sort().join(), Object.keys(read));
 
   await bridge.write({ collapsed_accounts: '["acc_9"]', ai_accounts_backup: 'copie' });
   check('écriture : visible depuis l\'ancienne page', await oldJs(`localStorage.getItem('collapsed_accounts') === '["acc_9"]' && localStorage.getItem('ai_accounts_backup') === 'copie'`));
+  check('écriture : sans effet sur l\'interface app://', await js('localStorage.getItem("collapsed_accounts")') !== '["acc_9"]');
 
   await bridge.remove(['ai_accounts', 'ai_accounts_backup']);
   check('effacement : clés retirées', await oldJs(`localStorage.getItem('ai_accounts') === null && localStorage.getItem('ai_accounts_backup') === null`));

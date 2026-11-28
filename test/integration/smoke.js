@@ -15,7 +15,7 @@ scenario('Démarrage et sécurité (profil vide)', {}, async ({ win, js, check, 
   check('API window.ovcr exposée (liste fermée, une méthode par opération)', api === JSON.stringify({
     files: ['listDirectory', 'readFile', 'saveFile', 'selectFolder'],
     accounts: ['exportToFile', 'importApply', 'importCancel', 'importPick', 'load', 'migrateLegacy', 'restoreBackup', 'save'],
-    storage: ['confirmRevert', 'pendingRevert'],
+    storage: ['confirmRevert', 'legacyAccounts', 'legacyPrefs', 'pendingRevert'],
     sitePermissions: ['reset'],
     services: ['openInBrowser'],
     diag: ['get', 'openLogs', 'report']
@@ -49,17 +49,44 @@ scenario('Démarrage et sécurité (profil vide)', {}, async ({ win, js, check, 
   const denied = await js(`ovcr.files.readFile(${JSON.stringify(path.join(ROOT, 'main.js'))})`);
   check('lecture refusée hors dossier choisi', denied && denied.error === 'denied', denied);
 
+  // --- Interface servie en app:// (phase 3, P5)
+  check('interface chargée depuis app://ovcr/index.html', win.webContents.getURL() === 'app://ovcr/index.html', win.webContents.getURL());
+  check('origine propre app://ovcr, contexte sécurisé', await js('location.origin === "app://ovcr" && window.isSecureContext'));
+  const served = await js(`Promise.all(['index.html', 'renderer/app.js', 'main.js', 'accounts-store.js', 'app-preload.js', 'package.json', 'legacy-bridge/legacy-storage.html', 'renderer/%2e%2e/main.js']
+    .map(p => fetch('app://ovcr/' + p).then(r => r.status, e => 'erreur')))`);
+  check('app:// ne sert que les fichiers de l\'interface (code du main, preload, pont : 404)', JSON.stringify(served) === '[200,200,404,404,404,404,404,404]', served);
+  const errorsBeforeFetch = consoleErrors.length;
+  const outside = await js(`Promise.all(['https://example.com/', ${JSON.stringify(require('url').pathToFileURL(path.join(ROOT, 'main.js')).href)}].map(u => fetch(u).then(() => 'chargé', () => 'refusé')))`);
+  check('fetch hors de app://ovcr refusé (CSP connect-src)', outside.every(x => x === 'refusé'), outside);
+  await delay(100);
+  for (let i = consoleErrors.length - 1; i >= errorsBeforeFetch; i--) {
+    if (/Content Security Policy|Fetch API cannot load/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
+  }
+
   // --- Navigation de la fenêtre hôte bloquée
   const before = win.webContents.getURL();
   await js('location.href = "https://example.com/"; true').catch(() => {});
   await delay(300);
   check('navigation de la fenêtre hôte bloquée', win.webContents.getURL() === before, win.webContents.getURL());
+  const errorsBeforeFile = consoleErrors.length;
+  await js(`location.href = ${JSON.stringify(require('url').pathToFileURL(path.join(ROOT, 'index.html')).href)}; true`).catch(() => {});
+  await delay(300);
+  check('retour vers l\'ancienne adresse file:// de l\'interface bloqué', win.webContents.getURL() === before, win.webContents.getURL());
+  // Chromium refuse lui-même app:// -> file:// (« Not allowed to load local
+  // resource ») : erreur provoquée volontairement, ne compte pas.
+  for (let i = consoleErrors.length - 1; i >= errorsBeforeFile; i--) {
+    if (/Not allowed to load local resource: file:/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
+  }
 
   // --- IPC refusé depuis une autre fenêtre (même preload)
   const intruder = new BrowserWindow({ show: false, webPreferences: { preload: path.join(ROOT, 'app-preload.js'), contextIsolation: true, sandbox: true } });
   await intruder.loadURL('data:text/html,<p>x</p>');
   const refused = await intruder.webContents.executeJavaScript('ovcr.accounts.load().then(() => "accepté", e => "refusé")', true);
   check('IPC refusé depuis une autre fenêtre', refused === 'refusé', refused);
+  // Même preload, sur l'ANCIENNE adresse file:// de l'interface : refusé aussi.
+  await intruder.loadFile(path.join(ROOT, 'index.html')).catch(() => {});
+  const refusedOld = await intruder.webContents.executeJavaScript('window.ovcr ? ovcr.accounts.load().then(() => "accepté", e => "refusé") : "sans preload"', true);
+  check('IPC refusé depuis l\'ancienne interface file://', refusedOld === 'refusé', refusedOld);
   intruder.destroy();
 
   // --- Webview illégitime refusée (http, domaine hors liste, sans partition)

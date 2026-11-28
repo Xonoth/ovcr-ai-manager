@@ -11,7 +11,7 @@ const get = (url, method = 'GET') => P.resolveAppRequest({ url, method }, ROOT);
 test('constantes : origine et adresse de l\'interface', () => {
   assert.equal(P.APP_ORIGIN, 'app://ovcr');
   assert.equal(P.INDEX_URL, 'app://ovcr/index.html');
-  assert.deepEqual({ ...P.SCHEME_PRIVILEGES }, { standard: true, secure: true }, 'ni fetch, ni CORS, ni service workers');
+  assert.deepEqual({ ...P.SCHEME_PRIVILEGES }, { standard: true, secure: true, supportFetchAPI: true }, 'fetch (worker de Monaco), mais ni CORS, ni service workers, ni contournement de la CSP');
   assert.ok(Object.isFrozen(P.SCHEME_PRIVILEGES) && Object.isFrozen(P.ALLOWED));
 });
 

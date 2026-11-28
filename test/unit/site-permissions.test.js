@@ -33,13 +33,34 @@ test.beforeEach(() => {
 });
 test.afterEach(() => fake.cleanup());
 
-test('interface locale : uniquement presse-papiers et plein écran', async () => {
-  const local = 'file:///C:/app/index.html';
+test('interface locale (app://ovcr) : uniquement presse-papiers et plein écran', async () => {
+  const local = 'app://ovcr/index.html';
   assert.equal(await request(local, 'clipboard-sanitized-write'), true);
+  assert.equal(await request(local, 'clipboard-read'), true);
   assert.equal(await request(local, 'fullscreen'), true);
   assert.equal(await request(local, 'geolocation'), false);
   assert.equal(await request(local, 'media', { mediaTypes: ['audio'] }), false);
+  assert.equal(await request(local, 'storage-access'), false, 'pas même ce que les sites reçoivent sans question');
+  assert.equal(handlers.check(null, 'clipboard-read', 'app://ovcr'), true);
+  assert.equal(handlers.check(null, 'notifications', 'app://ovcr'), false);
   assert.equal(fake.state.messageBoxCalls.length, 0, 'aucune question posée');
+});
+
+test('page file:// (pont vers l\'ancien localStorage, ancienne interface) : rien, sans question', async () => {
+  const page = 'file:///C:/app/legacy-bridge/legacy-storage.html';
+  for (const perm of ['clipboard-sanitized-write', 'clipboard-read', 'fullscreen', 'mediaKeySystem', 'storage-access', 'geolocation', 'notifications']) {
+    assert.equal(await request(page, perm), false, perm);
+    assert.equal(handlers.check(null, perm, 'file:///'), false, perm);
+  }
+  assert.equal(fake.state.messageBoxCalls.length, 0, 'aucune question posée');
+});
+
+test('origine opaque ou hôte app:// inconnu : refusé, sans question', async () => {
+  for (const url of ['app://autre/index.html', 'data:text/html,x', 'about:blank']) {
+    assert.equal(await request(url, 'geolocation'), false, url);
+    assert.equal(await request(url, 'clipboard-read'), false, url);
+  }
+  assert.equal(fake.state.messageBoxCalls.length, 0);
 });
 
 test('accordé sans question : écriture presse-papiers, plein écran, DRM', async () => {
@@ -103,13 +124,14 @@ test('capture d\'écran refusée et mémorisée : refusée sans question, y comp
   assert.equal(await request('https://claude.ai/', 'display-capture'), false);
   assert.equal(fake.state.messageBoxCalls.length, 1);
   assert.equal(handlers.check(null, 'display-capture', 'https://claude.ai'), false);
-  assert.equal(await request('file:///C:/app/index.html', 'display-capture'), false, 'jamais pour l\'interface locale');
+  assert.equal(await request('app://ovcr/index.html', 'display-capture'), false, 'jamais pour l\'interface locale');
 });
 
 test('vérification synchrone : notifications non accordées tant que non décidées', () => {
   assert.equal(handlers.check(null, 'notifications', 'https://claude.ai'), false);
   assert.equal(handlers.check(null, 'geolocation', 'https://claude.ai'), true, 'laisse la page tenter -> question');
   assert.equal(handlers.check(null, 'usb', 'https://claude.ai'), false);
+  assert.equal(handlers.check(null, 'geolocation', 'app://ovcr'), false);
   assert.equal(handlers.check(null, 'geolocation', 'file:///C:/app/index.html'), false);
 });
 

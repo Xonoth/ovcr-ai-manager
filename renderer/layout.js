@@ -4,8 +4,8 @@
 // Préférences d'affichage (localStorage), repli du tableau de bord, de
 // l'explorateur et de l'éditeur, colonnes redimensionnables à la souris.
 //
-// Ne fait rien au chargement : app.js appelle createPrefs(), init() et
-// setupResizers() au démarrage, chacun au même moment qu'auparavant.
+// Ne fait rien au chargement : app.js appelle importLegacyPrefs() puis
+// createPrefs(), init() et setupResizers() au démarrage.
 
 (function () {
   'use strict';
@@ -55,6 +55,35 @@
       };
     })();
     return prefs;
+  }
+
+  // Phase 3, P5 : depuis la 1.9.0, l'interface est en app://ovcr et a son
+  // propre localStorage. S'il ne contient encore aucune préférence (premier
+  // lancement de la 1.9.0), on reprend UNE FOIS celles de l'ancienne origine
+  // file:// (versions <= 1.8.0, lues par le main via le pont). Elles sont
+  // ensuite validées par createPrefs() et à la lecture, comme toutes les
+  // autres. L'ancienne copie n'est pas effacée (une 1.8.0 la retrouverait).
+  // Tout échec : préférences par défaut, jamais bloquant.
+  const LEGACY_PREF_KEYS = ['prefs_schema', 'ide_w', 'explorer_w', 'collapsed_accounts'];
+  async function importLegacyPrefs(api) {
+    try {
+      if (localStorage.getItem('prefs_schema') != null) return false;
+    } catch (e) {
+      return false; // localStorage indisponible : createPrefs() le signalera
+    }
+    let old;
+    try { old = await api.storage.legacyPrefs(); }
+    catch (e) { console.warn('[prefs] anciennes préférences illisibles :', e.message); return false; }
+    const found = LEGACY_PREF_KEYS.filter(k => old && typeof old[k] === 'string');
+    if (!found.length) return false;
+    try {
+      for (const k of found) localStorage.setItem(k, old[k]);
+    } catch (e) {
+      console.warn('[prefs] anciennes préférences non reprises :', e.message);
+      return false;
+    }
+    console.log('[prefs] préférences reprises de la version précédente : ' + found.join(', '));
+    return true;
   }
 
   // ctx.prefs : préférences créées par createPrefs().
@@ -157,5 +186,5 @@
     return { setupResizers };
   }
 
-  OVCR.layout = { createPrefs, init };
+  OVCR.layout = { createPrefs, importLegacyPrefs, init };
 })();

@@ -93,7 +93,9 @@ async function initApp() {
 
   // Préférences d'affichage (renderer/layout.js) : largeurs des colonnes et
   // repli des cartes, dans le localStorage, versionnées. Créées seulement
-  // ici, après le retour arrière éventuel (qui ne doit pas les écrire).
+  // ici, après le retour arrière éventuel (qui ne doit pas les écrire). Au
+  // premier lancement en app:// (1.9.0), reprises de l'ancien file://.
+  await OVCR.layout.importLegacyPrefs(api);
   const prefs = OVCR.layout.createPrefs();
 
   // Liste des comptes (renderer/accounts-ui.js) : cartes et repli, statistiques,
