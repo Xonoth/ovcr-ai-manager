@@ -17,7 +17,7 @@ const common = {
   // Les seules regex à caractères de contrôle du projet servent justement à
   // REFUSER ces caractères dans un nom de profil (partition de cookies).
   'no-control-regex': 'off',
-  'no-var': 'off',               // script classique historique (monacoRequested)
+  'no-var': 'off',               // script classique historique (monacoRequested, renderer/editor.js)
   'prefer-const': 'off'
 };
 

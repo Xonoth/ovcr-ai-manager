@@ -480,12 +480,15 @@
   </div>
 </div>
 
-<!-- Script de l'application : EXTERNE (renderer/app.js) et non inline, pour que
-     la CSP puisse interdire tout script inline. Monaco n'est plus chargé ici :
-     app.js injecte son loader à la première ouverture de l'éditeur. -->
+<!-- Scripts de l'application : EXTERNES et non inline, pour que la CSP puisse
+     interdire tout script inline. ORDRE IMPORTANT : core.js d'abord (espace de
+     noms window.OVCR), les modules ensuite, app.js en dernier (il les appelle
+     au démarrage). Monaco n'est pas chargé ici : renderer/editor.js injecte son
+     loader à la première ouverture de l'éditeur. -->
 <script src="renderer/core.js"></script>
 <script src="renderer/diagnostics-ui.js"></script>
 <script src="renderer/editor.js"></script>
+<script src="renderer/layout.js"></script>
 <script src="renderer/storage-ui.js"></script>
 <script src="renderer/accounts-ui.js"></script>
 <script src="renderer/panes.js"></script>

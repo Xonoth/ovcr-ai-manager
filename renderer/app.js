@@ -6,6 +6,21 @@
 // minimale exposée par app-preload.js sous window.ovcr, validée côté
 // processus principal. Script externe (et non inline) pour que la CSP de
 // index.html puisse interdire tout script inline.
+//
+// Depuis la phase 3 (P6), ce fichier ne contient plus que l'enchaînement du
+// démarrage, la délégation des clics et le tick des cooldowns. Le reste est
+// dans des scripts CLASSIQUES chargés avant lui par index.html, qui partagent
+// l'espace de noms window.OVCR et ne font rien tant qu'app.js ne les appelle
+// pas (sauf core.js, qui installe les diagnostics dès son chargement) :
+//   core.js           OVCR, état partagé (OVCR.state), escapeHtml, toasts,
+//                     diagnostics, écran d'échec du démarrage ;
+//   diagnostics-ui.js aide « Comprendre les IA » et section Diagnostic ;
+//   editor.js         éditeur de fichiers (Monaco à la demande, secours) ;
+//   layout.js         préférences d'affichage, replis, colonnes ;
+//   storage-ui.js     stockage des comptes, mode protégé, récupération ;
+//   accounts-ui.js    liste des comptes, cooldowns, palette, fenêtres ;
+//   panes.js          panneaux de service (webviews, erreurs, vue scindée).
+// Fonctions pures testées sous Node : cooldowns.js, pane-errors.js.
 
 // Socle de l'interface (renderer/core.js, chargé juste avant ce script) :
 // espace de noms window.OVCR (état partagé, escapeHtml, showToast,
@@ -75,49 +90,10 @@ async function initApp() {
   // Chargement initial tolérant : ne plante jamais (mode protégé au besoin).
   await storage.loadInitial();
 
-  // === Préférences d'affichage (localStorage, non sensibles) ===
-  // Clés : ide_w, explorer_w (largeurs « 123px »), collapsed_accounts (ids).
-  // Versionnées par `prefs_schema` (absent = 1). Une valeur invalide est
-  // ignorée (retour au défaut), jamais bloquante. Si les préférences viennent
-  // d'une version plus récente, on les lit mais on ne les réécrit pas.
-  // Une préférence non enregistrée n'est pas grave (seulement l'affichage) :
-  // on le signale dans la console, sans alerter l'utilisateur.
-  const PREFS_SCHEMA = 1;
-  const prefs = (() => {
-    let readOnly = false;
-    try {
-      const stored = localStorage.getItem('prefs_schema');
-      const v = stored == null ? 1 : Number(stored);
-      if (!Number.isInteger(v) || v > PREFS_SCHEMA) {
-        readOnly = true;
-        console.warn('[prefs] préférences d\'une version plus récente (schéma ' + stored + ') : lues, non réécrites');
-      } else if (stored == null) {
-        localStorage.setItem('prefs_schema', String(PREFS_SCHEMA));
-      }
-    } catch (e) {
-      readOnly = true;
-      console.warn('[prefs] localStorage indisponible, préférences par défaut :', e.message);
-    }
-    return {
-      get(key) {
-        try { return localStorage.getItem(key); }
-        catch (e) { console.warn('[prefs] lecture impossible :', key, e.message); return null; }
-      },
-      set(key, value) {
-        if (readOnly) return;
-        try { localStorage.setItem(key, value); }
-        catch (e) { console.warn('[prefs] préférence non enregistrée :', key, e.message); }
-      },
-      // Largeur mémorisée : « <nombre>px » raisonnable, sinon null.
-      width(key) {
-        const v = this.get(key);
-        if (v == null) return null;
-        if (/^\d{2,5}px$/.test(v)) return v;
-        console.warn('[prefs] largeur invalide ignorée :', key);
-        return null;
-      }
-    };
-  })();
+  // Préférences d'affichage (renderer/layout.js) : largeurs des colonnes et
+  // repli des cartes, dans le localStorage, versionnées. Créées seulement
+  // ici, après le retour arrière éventuel (qui ne doit pas les écrire).
+  const prefs = OVCR.layout.createPrefs();
 
   // Liste des comptes (renderer/accounts-ui.js) : cartes et repli, statistiques,
   // cooldowns, palette Ctrl+K, fenêtres d'ajout / modification / suppression.
@@ -137,106 +113,16 @@ async function initApp() {
   // fermeture. Définit setLayout, openService et closePane2.
   OVCR.panes.init({ api, SERVICES, renderAccounts, saveCollapsed });
 
-  window.toggleDashboard = function() {
-    const dash = document.getElementById('dashboard');
-    const btnShow = document.getElementById('btnShowDashboard');
-    dash.classList.toggle('collapsed');
-    btnShow.style.display = dash.classList.contains('collapsed') ? 'flex' : 'none';
-  }
-
-  window.toggleExplorer = function() { document.getElementById('fileExplorer').classList.toggle('collapsed'); }
-  window.toggleIdePanel = function() {
-    const p = document.getElementById('idePanel');
-    p.classList.toggle('collapsed');
-    // Monaco paresseux : chargé à la 1re OUVERTURE du panneau éditeur.
-    if (!p.classList.contains('collapsed')) OVCR.editor.ensureMonacoLoaded();
-  }
+  // Mise en page (renderer/layout.js) : définit toggleDashboard, toggleExplorer
+  // et toggleIdePanel (boutons), et le redimensionnement des colonnes.
+  const layout = OVCR.layout.init({ prefs });
 
   // Aide « Comprendre les IA disponibles » et section Diagnostic
   // (renderer/diagnostics-ui.js) : définit openHelpModal, closeHelpModal,
   // showDiagnostic, copyDiagnostic, openLogsFolder, resetSitePermissions.
   OVCR.diagnosticsUi.init({ api, SERVICES });
 
-  // Colonnes redimensionnables à la souris
-  function setupResizers() {
-    const overlay = document.getElementById('resizeOverlay');
-    const idePanel = document.getElementById('idePanel');
-    const fileExplorer = document.getElementById('fileExplorer');
-    const pane1 = document.getElementById('pane1');
-
-    // On lève les limites CSS qui empêcheraient d'agrandir/réduire librement.
-    idePanel.style.maxWidth = 'none';
-    idePanel.style.minWidth = '0';
-    fileExplorer.style.maxWidth = 'none';
-    fileExplorer.style.minWidth = '0';
-
-    // Restaure les largeurs mémorisées (via flex-basis = taille exacte).
-    // Lecture défensive (chantier C) : une valeur absente/illisible ne doit
-    // jamais empêcher l'app de démarrer — on retombe simplement sur le défaut.
-    const savedIde = prefs.width('ide_w');
-    if (savedIde) idePanel.style.flex = '0 0 ' + savedIde;
-    const savedExp = prefs.width('explorer_w');
-    if (savedExp) fileExplorer.style.flex = '0 0 ' + savedExp;
-
-    function makeResizer(resizer, opts) {
-      if (!resizer) return;
-      resizer.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        const startX = e.clientX;
-        const startSize = opts.getStart();
-        resizer.classList.add('dragging');
-        overlay.classList.add('active');
-        document.body.style.userSelect = 'none';
-
-        function move(ev) {
-          const max = typeof opts.max === 'function' ? opts.max() : opts.max;
-          let next = startSize + (ev.clientX - startX);
-          next = Math.max(opts.min, Math.min(max, next));
-          opts.apply(next);
-        }
-        function up() {
-          document.removeEventListener('mousemove', move);
-          document.removeEventListener('mouseup', up);
-          resizer.classList.remove('dragging');
-          overlay.classList.remove('active');
-          document.body.style.userSelect = '';
-          if (opts.onEnd) opts.onEnd();
-        }
-        document.addEventListener('mousemove', move);
-        document.addEventListener('mouseup', up);
-      });
-    }
-
-    // Éditeur (largeur du panneau IDE) ↔ panneaux IA
-    makeResizer(document.getElementById('resizerIde'), {
-      el: idePanel,
-      getStart: () => idePanel.getBoundingClientRect().width,
-      min: 260,
-      max: () => document.querySelector('.workspace-body').getBoundingClientRect().width - 320,
-      apply: (w) => { idePanel.style.flex = '0 0 ' + w + 'px'; },
-      onEnd: () => prefs.set('ide_w', Math.round(idePanel.getBoundingClientRect().width) + 'px')
-    });
-
-    // Explorateur de fichiers ↔ éditeur
-    makeResizer(document.getElementById('resizerExplorer'), {
-      el: fileExplorer,
-      getStart: () => fileExplorer.getBoundingClientRect().width,
-      min: 120,
-      max: () => idePanel.getBoundingClientRect().width - 160,
-      apply: (w) => { fileExplorer.style.flex = '0 0 ' + w + 'px'; },
-      onEnd: () => prefs.set('explorer_w', Math.round(fileExplorer.getBoundingClientRect().width) + 'px')
-    });
-
-    // Panneau IA 1 ↔ panneau IA 2 (vue scindée)
-    makeResizer(document.getElementById('resizerPane'), {
-      el: pane1,
-      getStart: () => pane1.getBoundingClientRect().width,
-      min: 200,
-      max: () => document.getElementById('webviewArea').getBoundingClientRect().width - 220,
-      apply: (w) => { pane1.style.flex = '0 0 ' + w + 'px'; }
-    });
-  }
-  setupResizers();
+  layout.setupResizers();
 
   // --- Délégation d'événements (chantier A) ---
   // Les listes rendues dynamiquement (comptes, palette, fichiers) n'ont plus
