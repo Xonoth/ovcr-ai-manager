@@ -9,7 +9,20 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
-## 0. Version 1.3.0 (Electron 45) — à faire en priorité
+## 0. Version 1.4.0 (fuses Electron) — validée le 28/11/2026
+
+La 1.4.0 ne change que le `.exe` (fuses, voir SECURITY.md §2) : ni le code, ni
+les données. `npm run test:fuses` vérifie le mécanisme sur une app jetable,
+mais **pas** le vrai `.exe` avec le vrai profil (les tests ne le lancent jamais).
+
+- [ ] **Sauvegarde** : app fermée, copier `%APPDATA%\ai-manager` ailleurs.
+- [ ] Copier le dossier `dist\[OVCR] AI Manager-win32-x64` dans un chemin avec `[ ]`, des espaces et des accents, lancer le `.exe` : l'app démarre (pas de fermeture immédiate ni de message d'erreur), tous les comptes sont là, `?` → « Diagnostic » indique la version **1.4.0** et « Stockage : ok, N compte(s), chiffré ».
+- [ ] **Éditeur Monaco** (chargé hors de l'archive vérifiée) : ouvrir un dossier, ouvrir un fichier, la coloration s'affiche ; modifier, Ctrl+S, rouvrir : modification présente.
+- [ ] Ouvrir 2 ou 3 services déjà connectés : sessions conservées ; une popup « Continuer avec Google » s'ouvre normalement.
+- [ ] (Contrôle facultatif) dans PowerShell, depuis le dossier du `.exe` : `$env:ELECTRON_RUN_AS_NODE='1'; & '.\[OVCR] AI Manager.exe' -e "console.log('node')"; Remove-Item Env:ELECTRON_RUN_AS_NODE` : l'app **s'ouvre normalement** et rien n'est affiché dans la console (en 1.3.0, le `.exe` servait de Node.js et affichait `node`).
+- [ ] Retour à la 1.3.0 puis à la 1.4.0 : tout est toujours là (les fuses ne touchent pas aux données ; `EnableCookieEncryption` n'est **pas** activé).
+
+## 0 bis. Version 1.3.0 (Electron 45) — validée le 28/11/2026
 
 La 1.3.0 change de moteur (Chromium 150 → 156) et d'API de chiffrement des
 comptes. Les tests automatiques couvrent le format et l'identité navigateur,
@@ -77,4 +90,5 @@ Points d'attention : Leonardo, Suno (auth Clerk : Google / Discord / téléphone
 ## 7. Build distribué (.exe)
 
 - [ ] `npm run dist` puis lancer `[OVCR] AI Manager.exe` depuis un dossier dont le chemin contient `[ ]`, des espaces et des accents : l'app démarre, l'éditeur Monaco s'ouvre, le diagnostic indique la bonne version et « (développement) » n'apparaît **pas**.
-- [ ] Le dossier packagé ne contient ni `test/`, ni `eslint.config.js`, ni `TESTS-MANUELS.md`.
+- [ ] Le dossier packagé ne contient ni `test/`, ni `scripts/`, ni `eslint.config.js`, ni `TESTS-MANUELS.md`.
+- [ ] La sortie de `npm run dist` contient `[fuses] appliqués et vérifiés` (sinon le build a échoué : ne pas distribuer).

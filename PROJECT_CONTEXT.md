@@ -50,7 +50,8 @@ ai-manager/
 ├── browser-identity-preload.js # Preload de session : aligne navigator sur Firefox sur les pages Google.
 ├── site-permissions.js # Autorisations des sites (position, micro, caméra, notifs…) : question + mémorisation par site.
 ├── scripts/
-│   └── prune-locales.js # Post-build : supprime les locales Chromium inutiles (garde fr/en-US/en-GB), lancé par `npm run dist`
+│   ├── prune-locales.js # Post-build : supprime les locales Chromium inutiles (garde fr/en-US/en-GB), lancé par `npm run dist`
+│   └── fuses.js         # (phase 3, P2) Post-build : applique et relit les fuses Electron du .exe (jeu WANTED), vérifie l'empreinte d'app.asar
 ├── assets/
 │   ├── icons.js        # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
 │   └── fonts/          # 6 .woff2 (Space Grotesk, Inter, JetBrains Mono ; sous-ensembles latin + latin-ext)
@@ -77,19 +78,20 @@ ai-manager/
   - `npm test` : tests **unitaires** (`node --test`, Electron simulé par `test/helpers/fake-electron.js`) : stockage, écritures interrompues, migrations, cooldowns (fuseau Europe/Paris, changements d'heure), règles de sécurité, accès fichiers, autorisations, diagnostics, classification des erreurs.
   - `npm run test:electron` : tests d'**intégration** — un vrai Electron par scénario, dossier de données **temporaire** (le vrai profil n'est jamais touché), **aucun accès réseau** (les pages de service sont factices, servies localement). Couvre démarrage, isolation/CSP/IPC, récupération après corruption, pannes de stockage, migration 1.0.4, schéma futur, compatibilité du chiffrement avec la 1.2.0, diagnostics, erreurs de panneau (plantage réel, échec de chargement), identité navigateur (marque GREASE comparée à celle de Chromium, FedCM, Chrome/Firefox), cooldowns, instance unique. Chaque scénario échoue aussi si l'app appelle une **API Electron dépréciée**.
   - `npm run test:perf` : mesures (mémoire, fuites de webviews/processus/tas JS sur 30 ouvertures).
+  - `npm run test:fuses` : (phase 3) comportement des fuses sur une app **jetable** construite dans le dossier temporaire avec le même Electron (témoin sans fuses, puis avec) ; ~10 s, ne lance jamais le vrai `.exe`.
   - `npm run lint` : ESLint.
   - Les **tests manuels** (vrais services IA, OAuth, vraie coupure réseau…) sont listés dans `TESTS-MANUELS.md`.
 - **Construire le .exe** : `npm run dist`
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-<version>.zip` (dernier livré : 1.3.0, 142,3 Mo, dossier complet — 128 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
-  → le script `dist` enchaîne automatiquement `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-<version>.zip` (dernier livré : 1.4.0, 142,3 Mo, dossier complet — 128 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → le script `dist` enchaîne automatiquement `node scripts/fuses.js` (fuses appliqués puis relus : le build **échoue** si l'état diffère ou si l'empreinte d'`app.asar` manque), puis `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
 > ℹ️ Le build `dist/` est à jour (nom, thème, durcissement A/B/C/D, bouton d'ajout de compte). L'ancien build « AI Agentic Workbench » et son zip ont été supprimés. Après toute modif de `index.html`/`main.js`/`assets/`, relancer `npm run dist` **puis** recréer le zip (voir ci-dessous).
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.3.0.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.4.0.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -231,7 +233,7 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 - Tests : unitaires + intégration locaux (voir §4) ; les services IA réels, l'OAuth et une vraie coupure réseau restent **manuels** (`TESTS-MANUELS.md`).
 - `npm audit` : alertes restantes uniquement dans les outils de développement (packager, ESLint) ; `npm audit --omit=dev` ne voit pas Electron, qui est pourtant embarqué (voir SECURITY.md §6).
 - ~~Icônes/polices dépendent d'Internet (CDN).~~ **Corrigé** : tout est local (`assets/`).
-- `.exe` non signé (avertissement SmartScreen).
+- `.exe` non signé (avertissement SmartScreen). Fuses appliqués depuis la 1.4.0, mais l'intégrité ne couvre ni `app.asar.unpacked` ni le `.exe` lui-même (SECURITY.md §6).
 - `electron-builder` inutilisable ici (droits symlinks) → on ne peut pas produire un vrai portable mono-fichier ni un installateur sans activer le Mode développeur Windows ou lancer en admin. Il n'est donc plus installé (voir §2) ; seule sa config `build` reste dans `package.json`.
 
 ## 12. Idées d'évolutions possibles (non demandées, à titre indicatif)
@@ -459,6 +461,16 @@ Electron ne maintient que les 3 dernières versions majeures : la 43 n'aura plus
 - **Piège** : la clé de chiffrement vit dans `Local State`, écrit par Chromium surtout à la fermeture normale. Une sonde qui quitte par `app.exit()` ne l'écrit pas et ne relit donc rien au lancement suivant. Même dans l'app, un arrêt brutal juste après le tout premier chiffrement pourrait rendre le premier `accounts.json` indéchiffrable (risque déjà présent en 1.2.0, **non vérifié** ; le mode protégé et la sauvegarde prennent alors le relais) — à examiner en P8.
 - **Tests** : 112 tests unitaires, 143 vérifications d'intégration, 8 contrôles de perf, ESLint 0 signalement — tous verts sur Electron 45.3.2.
 
+### Phase 3 — P2 : fuses Electron (novembre 2026, version 1.4.0)
+
+Durcissement du `.exe` packagé, sans changement de code applicatif. `@electron/fuses` **2.1.3** (29/06/2026, figée, développement uniquement). `scripts/fuses.js` contient le jeu `WANTED` (chaque fuse écrit explicitement, `strictlyRequireAllFuses`) ; `npm run dist` l'applique après electron-packager, relit le binaire et vérifie que la ressource `ELECTRONASAR` du `.exe` contient bien le SHA-256 de l'en-tête d'`app.asar` (electron-packager 20.3.0 l'écrit déjà sous Windows). Jeu appliqué : `RunAsNode`, `EnableNodeOptionsEnvironmentVariable`, `EnableNodeCliInspectArguments` **désactivés** ; `EnableEmbeddedAsarIntegrityValidation`, `OnlyLoadAppFromAsar` **activés** ; `GrantFileProtocolExtraPrivileges` laissé activé (interface en `file://`, P5) ; `EnableCookieEncryption` laissé désactivé (**P3, décision de l'utilisateur**) ; `LoadBrowserProcessSpecificV8Snapshot` et `WasmTrapHandlers` aux valeurs d'Electron. Détail : SECURITY.md §2.
+
+- **Tests** : `test/unit/fuses.test.js` (8 tests, faux binaires : jeu complet et explicite, application puis relecture, fuse inconnu ou retiré, calcul et contrôle de l'empreinte d'`app.asar`) ; `npm run test:fuses` (`test/packaged/fuses.js`, 19 vérifications) : app jetable dans `%TEMP%` (copie de l'Electron du projet, `app.asar` avec un dossier dépaqueté, empreinte inscrite comme le fait le packager, puis le même `scripts/fuses.js`). Sans fuses, chaque contournement est **constaté** (mode Node, `NODE_OPTIONS`, `--inspect`, archive remplacée, fichier modifié dans l'archive, dossier `resources/app`) ; avec fuses, chacun est **refusé**, et une page de l'archive charge toujours un script dépaqueté (cas de Monaco).
+- **Constats** : pour Electron, `ELECTRON_RUN_AS_NODE=''` (vide) compte comme **définie** : un test qui veut l'éviter doit **retirer** la variable de l'environnement. Electron refuse déjà `NODE_OPTIONS=--require` dans une app packagée (« Most NODE_OPTIONs are not supported in packaged apps ») ; le fuse ferme les options restantes.
+- **Build** : `scripts/` est désormais exclu du `.exe` (`--ignore="^/scripts($|/)"` ; `prune-locales.js` y était embarqué jusqu'en 1.3.0). Les dossiers vides des dépendances de dev qui restent dans `app.asar` après `--prune` ne contiennent aucun fichier.
+- **Tests** : 120 unitaires, 143 vérifications d'intégration, 8 contrôles de perf, 19 vérifications des fuses, ESLint 0 signalement.
+- **Validé à la main par l'utilisateur** le 28/11/2026 avec le vrai `.exe` 1.4.0 et le vrai profil (`TESTS-MANUELS.md` §0 : démarrage, Monaco, sessions, popup Google, retour à la 1.3.0), puis livré : zip `dist/OVCR-AI-Manager-1.4.0.zip` (142,3 Mo, 128 fichiers).
+
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (le plus souvent `renderer/app.js` ou `index.html`, parfois `main.js` / un module du main), rappelle que c'est du **JS vanilla en script classique** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
 
@@ -466,4 +478,4 @@ Réflexes : **toute donnée utilisateur injectée en HTML doit passer par `escap
 
 Réflexes phase 2 : **toute écriture de fichier de données passe par `atomic-file.js`** ; un **changement de forme des comptes** = `SCHEMA` + une étape dans `MIGRATIONS` (pure, idempotente, charge utile toujours un tableau) + des tests dans `test/unit/migrations.test.js` ; une modification de comptes côté interface vérifie `ensureWritable()` ; **pas de `catch` vide** (journaliser, ou commenter pourquoi l'erreur est sans effet) ; les journaux ne contiennent **que des identifiants techniques** (id de compte, hôte, code), jamais un nom, un e-mail ou une URL complète ; une nouvelle fonction appelée depuis `COMMANDS`/la délégation et posée sur `window` doit être ajoutée aux globales de `eslint.config.js` ; lancer `npm test`, `npm run test:electron` et `npm run lint` avant tout build.
 
-Réflexes phase 3 : **Electron en version exacte** dans `package.json`, publiée depuis au moins deux semaines ; à chaque montée de version, relire les « breaking changes », puis s'appuyer sur `browser-identity.js` (scénario d'intégration : marque GREASE, FedCM) et sur le contrôle « aucune API Electron dépréciée » ; `safeStorage` uniquement par son **API asynchrone** ; toute évolution du chiffrement se vérifie aussi **entre deux vrais binaires** sur un même profil (l'ancien relit-il ce qu'écrit le nouveau ?), avec une sortie normale de l'app (sinon `Local State` n'est pas écrit).
+Réflexes phase 3 : un fuse se change **uniquement** dans `WANTED` (`scripts/fuses.js`), avec `test/unit/fuses.test.js` et `npm run test:fuses` ; après une montée d'Electron, `npm run dist` échoue si un nouveau fuse apparaît : le décider explicitement. **Electron en version exacte** dans `package.json`, publiée depuis au moins deux semaines ; à chaque montée de version, relire les « breaking changes », puis s'appuyer sur `browser-identity.js` (scénario d'intégration : marque GREASE, FedCM) et sur le contrôle « aucune API Electron dépréciée » ; `safeStorage` uniquement par son **API asynchrone** ; toute évolution du chiffrement se vérifie aussi **entre deux vrais binaires** sur un même profil (l'ancien relit-il ce qu'écrit le nouveau ?), avec une sortie normale de l'app (sinon `Local State` n'est pas écrit).

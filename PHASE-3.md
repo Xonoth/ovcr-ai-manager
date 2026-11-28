@@ -6,6 +6,8 @@
 > Ce fichier n'est pas embarqué dans le `.exe`.
 
 > **Avancement (28 novembre 2026)** — **P1 fait** en version **1.3.0** (Electron 45.3.2, Chromium 156, `safeStorage` asynchrone), tous les tests automatiques verts (112 unitaires, 143 vérifications d'intégration, perf, lint) ; détail dans PROJECT_CONTEXT §13 « Phase 3 ». **Validée à la main par l'utilisateur** (`TESTS-MANUELS.md` §0), zip `dist/OVCR-AI-Manager-1.3.0.zip` créé. Pas de release GitHub. Corrections des faits datés ci-dessous : la fin de vie de la 43 est annoncée pour **janvier 2027** (et non mi-décembre) ; 43.8.13 existe ; `package.json` est désormais en version figée. Décisions P2 à P9 (§4) : **pas encore prises**. Nouveau point pour P8 : vérifier qu'un arrêt brutal juste après le tout premier chiffrement ne rend pas `accounts.json` illisible (la clé vit dans `Local State`, écrit surtout à la fermeture).
+>
+> **P2 fait** en version **1.4.0** (28/11/2026) : fuses appliqués par `npm run dist` (`scripts/fuses.js`), vérifiés par `npm run test:fuses` sur une app jetable (19/19) ; `EnableEmbeddedAsarIntegrityValidation` fonctionne sous Windows avec electron-packager 20.3.0 (empreinte `ELECTRONASAR` déjà écrite) ; Monaco (`app.asar.unpacked`) reste chargeable. `EnableCookieEncryption` **non activé** (P3 en attente de décision), `GrantFileProtocolExtraPrivileges` laissé activé (P5). Détail : PROJECT_CONTEXT §13 « Phase 3 — P2 ». **Validée à la main par l'utilisateur** (`TESTS-MANUELS.md` §0), zip `dist/OVCR-AI-Manager-1.4.0.zip` créé. Pas de release GitHub. Prochaine décision : P3 (cookies chiffrés).
 
 ---
 

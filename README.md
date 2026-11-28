@@ -48,6 +48,7 @@ npm start               # lance l'app en dev (electron .)
 npm test                # tests unitaires (node:test)
 npm run test:electron   # tests d'intégration (vrai Electron, données temporaires, sans réseau)
 npm run test:perf       # mesures mémoire / fuites
+npm run test:fuses      # fuses du .exe, sur une app jetable (dossier temporaire)
 npm run lint            # ESLint
 ```
 
@@ -59,7 +60,7 @@ Les tests n'utilisent **jamais** votre vrai profil (`%APPDATA%\ai-manager`) ni l
 npm run dist
 ```
 
-Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet — pour distribuer, zippez tout le dossier). Le script purge automatiquement les locales Chromium inutilisées et les traductions Monaco (−46 Mo).
+Produit `dist/[OVCR] AI Manager-win32-x64/` (l'exe a besoin du dossier complet — pour distribuer, zippez tout le dossier). Le script purge automatiquement les locales Chromium inutilisées et les traductions Monaco (−46 Mo), et applique puis vérifie les **fuses Electron** du `.exe` (`scripts/fuses.js`, voir [SECURITY.md](SECURITY.md) §2).
 
 **Limitation connue** : le packaging utilise `@electron/packager`. `electron-builder` ne fonctionne pas sans droits administrateur ou Mode développeur Windows (création de liens symboliques) — c'est pourquoi il n'y a ni installateur ni exe portable mono-fichier, et pourquoi il n'est plus installé (seule sa config `build` reste dans `package.json`).
 
@@ -84,7 +85,7 @@ ai-manager/
 ├── assets/
 │   ├── icons.js            # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
 │   └── fonts/              # Polices WOFF2 locales (Space Grotesk, Inter, JetBrains Mono)
-├── scripts/prune-locales.js # Post-build : purge des locales Chromium inutilisées
+├── scripts/                # Outils de build (exclus du .exe) : purge des locales, fuses Electron
 ├── test/                   # Tests unitaires (node:test) et d'intégration (Electron) — exclus du .exe
 ├── eslint.config.js        # ESLint (développement uniquement)
 ├── TESTS-MANUELS.md        # Vérifications à faire à la main (services réels, OAuth, réseau…)
@@ -113,6 +114,7 @@ Le détail complet (modèle, migration, retour arrière, limites) est dans [SECU
 - Échappement HTML systématique de toute donnée utilisateur injectée dans le DOM ; aucun `onclick` généré dynamiquement (délégation d'événements par `data-*`).
 - La fenêtre hôte ne peut pas naviguer vers une URL distante ni ouvrir de fenêtre ; les popups des webviews sont filtrées par **liste blanche d'origines** (les 9 services + fournisseurs OAuth courants), tout le reste part dans le navigateur système.
 - **Autorisations des sites demandées, plus accordées d'office** : position, micro, caméra, notifications, lecture du presse-papiers, capture d'écran et ouverture d'applications externes déclenchent une question (« Autoriser / Refuser », mémorisable par site). Le reste (USB, MIDI, série…) est refusé. Bouton « Réinitialiser les autorisations des sites » dans la page d'aide (`?`).
+- **Exécutable durci (fuses Electron)** : le `.exe` ne peut plus servir de Node.js (`ELECTRON_RUN_AS_NODE`), ignore `NODE_OPTIONS` et `--inspect`, ne charge l'app que depuis `app.asar` et refuse de démarrer si cette archive a été modifiée.
 - Garde-fous divers : unicité des profils (pas de partage de session accidentel), limite de taille des fichiers ouverts dans l'éditeur, stockage tolérant à la corruption avec backup, **une seule instance** de l'app à la fois (pas d'écritures concurrentes).
 - Journal de diagnostic **local et expurgé** ; « Ouvrir dans le navigateur » n'accepte que l'adresse https d'un service connu.
 
@@ -123,7 +125,7 @@ Les issues de sécurité sont bienvenues — merci de les signaler de façon res
 Projet maintenu en solo, contributions bienvenues — en particulier :
 
 - **Ajouter un service IA** (le pattern est entièrement data-driven) : une entrée dans `SERVICES`, des variables de couleur `--<id>`/`--<id>-dim` + une classe `.svc-<id>`, une fiche `SERVICE_INFO` pour la page d'aide, et si besoin le domaine d'auth dans `ALLOWED_POPUP_HOSTS` (`main.js`). La migration attache automatiquement le nouveau service aux comptes existants.
-- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : fuses Electron, signature).
+- Corrections de bugs, améliorations de performance mesurées, durcissement sécurité (pistes ouvertes dans [SECURITY.md](SECURITY.md) §7 : chiffrement des cookies, signature).
 
 Règles du projet : JS vanilla sans dépendance nouvelle, toute donnée utilisateur passe par `escapeHtml()`, aucun script ni `onclick` inline (CSP), tout accès disque passe par une méthode dédiée de `window.ovcr` validée dans le processus principal, les écritures de comptes passent par `saveAccounts()`, les listes cliquables utilisent la délégation d'événements. Lisez `PROJECT_CONTEXT.md` avant une contribution non triviale. Fork → branche → pull request.
 

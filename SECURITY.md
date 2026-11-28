@@ -1,6 +1,6 @@
 # Sécurité — [OVCR] AI Manager
 
-État après la **phase 1 « Sécurité et fondations »** et la **phase 2 « Fiabilité et robustesse »** (novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
+État après la **phase 1 « Sécurité et fondations »**, la **phase 2 « Fiabilité et robustesse »** et le début de la **phase 3** (Electron 45 en 1.3.0, fuses en 1.4.0 ; novembre 2026). Ce document décrit le modèle de sécurité, ce qui est protégé, et surtout ce qui **ne l'est pas**. La phase 2 n'a assoupli **aucune** règle de la phase 1 : elle est vérifiée par des tests automatisés (`test/unit/security-policy.test.js`, `test/integration/smoke.js`).
 
 ## 1. Modèle : qui a le droit de faire quoi
 
@@ -42,6 +42,23 @@ frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
 - `style-src 'unsafe-inline'` est conservé : attributs `style=""` de l'interface et balises `<style>` injectées par Monaco. Cela n'exécute aucun code.
 - Aucune connexion réseau depuis l'interface ; les `<webview>` ne sont pas des iframes et ne dépendent pas de `frame-src`.
 - Monaco tourne sans `unsafe-eval`, avec ses web workers (`worker-src 'self'`).
+
+### Binaire packagé : fuses Electron (depuis la 1.4.0)
+
+Les fuses sont des octets écrits dans le `.exe` lui-même, lus par Electron avant tout code JS. `npm run dist` les applique (`scripts/fuses.js`, une seule source), les **relit** et échoue si l'état obtenu diffère ou si l'empreinte d'`app.asar` manque dans le `.exe`. Ils ne concernent que le binaire de `dist/` : `npm start` et les tests utilisent l'Electron de `node_modules`, jamais modifié.
+
+| Fuse | État | Effet |
+|---|---|---|
+| `RunAsNode` | désactivé | `ELECTRON_RUN_AS_NODE=1` ne transforme plus le `.exe` en Node.js : l'app démarre normalement. |
+| `EnableNodeOptionsEnvironmentVariable` | désactivé | `NODE_OPTIONS` ignoré. (Electron refusait déjà `--require` dans une app packagée, mais d'autres options passaient.) |
+| `EnableNodeCliInspectArguments` | désactivé | `--inspect` / `--inspect-brk` ignorés : pas de débogueur attachable au `.exe`. |
+| `EnableEmbeddedAsarIntegrityValidation` | activé | Refus de démarrer si l'en-tête d'`app.asar` ne correspond plus à l'empreinte inscrite dans le `.exe` (ressource `ELECTRONASAR`, écrite par `@electron/packager`), refus de lire un fichier de l'archive dont le contenu a changé. |
+| `OnlyLoadAppFromAsar` | activé | Un dossier `resources/app` posé à côté n'est pas chargé. |
+| `GrantFileProtocolExtraPrivileges` | **activé** (défaut) | Nécessaire tant que l'interface est en `file://` (chantier `app://`, voir §7). |
+| `EnableCookieEncryption` | **désactivé** (défaut) | Décision de l'utilisateur, irréversible : voir §6 et §7. |
+| `LoadBrowserProcessSpecificV8Snapshot`, `WasmTrapHandlers` | défauts d'Electron | Écrits explicitement : chaque fuse est décidé (une future version d'Electron qui en ajoute un fait échouer le build). |
+
+Vérifié par `npm run test:fuses` sur une app **jetable** construite comme la vraie, avec le même Electron et le même jeu de fuses : chaque contournement est d'abord constaté **sans** fuses (témoin), puis refusé **avec**. L'app jetable vérifie aussi qu'une page de l'archive charge toujours un script de `app.asar.unpacked`, comme l'interface charge Monaco. Le vrai `.exe` n'est jamais lancé par les tests (il utiliserait le vrai profil).
 
 ## 3. Webviews et popups
 
@@ -106,13 +123,13 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 - `safeStorage`/DPAPI protège contre les autres comptes Windows et la copie du disque à froid, **pas** contre un programme malveillant qui tourne sous votre compte (il peut demander le déchiffrement lui-même). Règle inchangée : **une session Windows = une personne**.
 - Les anciennes valeurs effacées du `localStorage` peuvent subsister quelque temps dans les fichiers internes de LevelDB (`Local Storage\leveldb\*.log`) jusqu'à leur compactage par Chromium.
 - `style-src 'unsafe-inline'` dans la CSP (nécessaire à Monaco et aux styles en ligne).
-- Exécutable non signé (SmartScreen) ; pas de vérification d'intégrité de `app.asar`.
+- Exécutable non signé (SmartScreen). La vérification d'intégrité (1.4.0) protège `app.asar` contre une modification **isolée**, mais : elle ne couvre ni `app.asar.unpacked` (Monaco, chargé par l'interface), ni le `.exe` et les DLL ; et sans signature, rien n'empêche de remplacer **ensemble** le `.exe` et `app.asar` (ou d'inscrire une nouvelle empreinte). Comme pour `safeStorage`, cela ne protège pas d'un programme malveillant qui écrit déjà dans le dossier de l'app : la signature (§7) est le complément.
 - La liste `ALLOWED_POPUP_HOSTS` fait confiance à tous les sous-domaines de ses entrées (ex. `*.google.com`).
 - Un site autorisé peut ouvrir des liens dans le navigateur système sans limite de fréquence (comportement antérieur, inchangé).
 - **Electron** : passé de 43.7.1 à 43.8.10 en 1.2.0 (4 alertes `npm audit` d'Electron corrigées), puis à **45.3.2** en 1.3.0 (Chromium **156.0.8078.100**), avant la fin de support de la 43 (Electron ne corrige que les 3 dernières versions majeures). Version désormais **figée** dans `package.json`. Le changement de Chromium modifie la marque « GREASE » annoncée (`"Not:A-Brand"` v8 en 156) : un test d'intégration la compare à celle que Chromium calcule lui-même, et vérifie que FedCM reste désactivé. La connexion Google réelle reste à valider à la main à chaque montée de Chromium. Le chiffrement des comptes passe par l'**API asynchrone** de `safeStorage` (l'API synchrone disparaît en Electron 46) : même DPAPI, même clé, même format, donc même protection et retour arrière vers la 1.2.0 possible. Attention, `npm audit --omit=dev` ne voit pas Electron (déclaré en dépendance de développement alors qu'il est **embarqué dans le .exe**) : toujours lancer `npm audit` complet. Les alertes restantes (`undici`, `glob`, `minimatch`, `@electron/asar`, `eslint`) concernent les **outils de développement** (packager, ESLint), pas le .exe.
 
 ## 7. Pistes pour la suite (non faites)
 
-- **Fuses Electron** au packaging (`@electron/fuses`) : désactiver `RunAsNode`, `EnableNodeOptionsEnvironmentVariable`, `EnableNodeCliInspectArguments` ; activer `EnableEmbeddedAsarIntegrityValidation` + `OnlyLoadAppFromAsar` ; et, sur décision, `EnableCookieEncryption` (passage sûr de « clair » à « chiffré », mais retour impossible : les cookies seraient perdus).
+- **Fuse `EnableCookieEncryption`** (les autres fuses sont appliqués depuis la 1.4.0, §2) : sur décision de l'utilisateur seulement (passage sûr de « clair » à « chiffré », mais retour impossible : une version antérieure perdrait toutes les sessions). Il suffira de le passer à `true` dans `scripts/fuses.js` (et d'adapter `test/unit/fuses.test.js`).
 - Signature de l'exécutable.
 - Protocole `app://` personnalisé à la place de `file://` (origine propre ; demanderait une migration du `localStorage` restant).
