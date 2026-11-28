@@ -27,6 +27,7 @@ const SCENARIOS = [
   ['storage-hard-kill.js'],
   ['storage-revert.js', { OVCR_SCENARIO: 'revert' }],
   ['storage-revert.js', { OVCR_SCENARIO: 'nothing' }],
+  ['legacy-bridge.js'],
   ['accounts-transfer.js'],
   ['diagnostics.js'],
   ['webview-errors.js'],
