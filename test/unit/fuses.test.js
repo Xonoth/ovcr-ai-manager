@@ -42,7 +42,8 @@ test('jeu de fuses de la phase 3 (P2 + P3 : cookies chiffrés)', () => {
   assert.equal(w.EnableNodeCliInspectArguments, false);
   assert.equal(w.EnableEmbeddedAsarIntegrityValidation, true);
   assert.equal(w.OnlyLoadAppFromAsar, true);
-  // Interface encore en file:// (P5 non fait) : la désactiver casserait l'app.
+  // Interface en app:// depuis la 1.9.0, mais le pont vers l'ancien
+  // localStorage file:// (legacy-storage.js) en a besoin : P5 bis.
   assert.equal(w.GrantFileProtocolExtraPrivileges, true);
   // P3 (1.5.0), décidé par l'utilisateur. IRRÉVERSIBLE : le repasser à false
   // ferait perdre toutes les sessions (voir npm run test:cookies).

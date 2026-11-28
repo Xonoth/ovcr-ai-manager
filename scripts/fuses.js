@@ -40,7 +40,11 @@ const WANTED = Object.freeze({
   OnlyLoadAppFromAsar: true,
   // Valeur par défaut d'Electron : aucun snapshot V8 propre au processus principal.
   LoadBrowserProcessSpecificV8Snapshot: false,
-  // L'interface est servie en file:// : à garder tant que P5 (app://) n'est pas fait.
+  // Depuis la 1.9.0 (P5), l'interface est servie en app:// et n'en a plus
+  // besoin. MAIS le pont vers l'ancien localStorage file:// (legacy-storage.js :
+  // préférences des versions <= 1.8.0, migration 1.0.4, retour arrière) ne
+  // marche qu'avec ce fuse (vérifié par npm run test:fuses). Le couper =
+  // « P5 bis » : retirer d'abord le pont.
   GrantFileProtocolExtraPrivileges: true,
   // Valeur par défaut d'Electron (sécurité et performance de WebAssembly).
   WasmTrapHandlers: true
