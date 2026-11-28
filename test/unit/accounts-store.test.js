@@ -46,6 +46,35 @@ test('save puis load : mêmes comptes, charge utile chiffrée', async () => {
   assert.deepEqual(l.accounts, [acc(1), acc(2)]);
 });
 
+test('clé renouvelée (shouldReEncrypt) : comptes lus, fichier PAS réécrit au chargement', async () => {
+  await store.save([acc(1)]);
+  const before = fs.readFileSync(p('accounts.json'), 'utf8');
+  fake.state.shouldReEncrypt = true;
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (...a) => warnings.push(a.join(' '));
+  let l;
+  try { l = await store.load(); } finally { console.warn = warn; }
+  assert.equal(l.status, 'ok');
+  assert.deepEqual(l.accounts, [acc(1)]);
+  assert.equal(fs.readFileSync(p('accounts.json'), 'utf8'), before, 'aucune réécriture (retour arrière préservé)');
+  assert.ok(warnings.some(w => /clé de chiffrement renouvelée/.test(w)), 'tracé dans le journal');
+  // Le prochain enregistrement normal rechiffre (avec la clé courante).
+  assert.equal((await store.save([acc(1), acc(2)])).ok, true);
+  assert.equal(readEnvelope('accounts.json').encryption, 'safeStorage');
+});
+
+test('réponse de déchiffrement inattendue : traitée comme indéchiffrable, jamais comme vide', async () => {
+  await store.save([acc(1)]);
+  const original = fake.electron.safeStorage.decryptStringAsync;
+  fake.electron.safeStorage.decryptStringAsync = async () => ({ shouldReEncrypt: false });
+  try {
+    assert.equal((await store.load()).status, 'undecryptable');
+  } finally {
+    fake.electron.safeStorage.decryptStringAsync = original;
+  }
+});
+
 test('chaque save garde la génération précédente dans .bak', async () => {
   await store.save([acc(1)]);
   await store.save([acc(1), acc(2)]);
@@ -201,7 +230,7 @@ test('retour arrière : inactif sans le drapeau de lancement', async () => {
 function idsInEnvelopeFile(filePath) {
   const env = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   const raw = env.encryption === 'none' ? env.payload
-    : fake.electron.safeStorage.decryptString(Buffer.from(env.payload, 'base64'));
+    : fake.decrypt(Buffer.from(env.payload, 'base64'));
   return JSON.parse(raw).map(a => a.id);
 }
 

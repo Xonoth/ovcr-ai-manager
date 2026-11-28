@@ -45,8 +45,12 @@ scenario('Cooldowns : états, confirmation, persistance, réactivation automatiq
   const c1 = await btn('claude');
   check('1er clic sur un cooldown actif : demande de confirmation', c1.text === 'Confirmer ?', c1);
   check('rien n\'est modifié avant confirmation', (await stored('claude')) > Date.now());
+  // Expiration prévue à 5,05 s. La fenêtre de test n'est jamais au premier
+  // plan : Chromium y aligne les minuteries sur la seconde, d'où une marge
+  // d'attente (sans elle, ce contrôle échouait environ une fois sur quatre).
   await delay(5400);
-  check('sans 2e clic : la confirmation expire, cooldown intact', /^⏳/.test((await btn('claude')).text));
+  const expired = await waitFor(async () => /^⏳/.test((await btn('claude')).text), 2000, 'expiration de la confirmation').catch(() => false);
+  check('sans 2e clic : la confirmation expire, cooldown intact', expired);
   await click('claude');
   await click('claude');
   await delay(300);

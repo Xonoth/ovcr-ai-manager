@@ -11,6 +11,12 @@
 // Si le chiffrement est indisponible, la charge utile est écrite en clair
 // (encryption: "none") et rechiffrée dès qu'il redevient disponible.
 //
+// API ASYNCHRONE de safeStorage depuis la 1.3.0 (Electron 45 déprécie l'API
+// synchrone, Electron 46 la supprime). Vérifié entre Electron 43.8.10 et
+// 45.3.2 sur un même profil : les deux API produisent le même format (« v10 »,
+// même clé rangée dans « Local State »), dans les deux sens. Un retour à la
+// 1.2.0 relit donc les fichiers écrits par cette version, et inversement.
+//
 // Le renderer n'écrit plus jamais ces fichiers : il envoie la liste, le
 // processus principal la VALIDE (types, tailles, formats) avant d'écrire.
 //
@@ -76,17 +82,24 @@ function serial(fn) {
 const isIdle = () => pending === 0;
 const whenIdle = () => queue;
 
-function canEncrypt() {
-  try { return safeStorage.isEncryptionAvailable(); } catch (_) { return false; }
+// Le chiffreur asynchrone ne s'initialise qu'après app.ready : on l'attend
+// toujours (en pratique, tous les appels arrivent par IPC, donc après).
+async function canEncrypt() {
+  try {
+    await app.whenReady();
+    return await safeStorage.isAsyncEncryptionAvailable();
+  } catch (_) {
+    return false;
+  }
 }
 
 // schema : version de schéma de la charge utile (omis pour les fichiers qui ne
 // contiennent pas une liste de comptes, ex. la sauvegarde pré-migration 1.0.4).
-function encode(raw, schema) {
+async function encode(raw, schema) {
   const base = { format: FORMAT, version: VERSION, savedAt: new Date().toISOString() };
   if (schema !== undefined) base.schema = schema;
-  if (canEncrypt()) {
-    return { ...base, encryption: 'safeStorage', payload: safeStorage.encryptString(raw).toString('base64') };
+  if (await canEncrypt()) {
+    return { ...base, encryption: 'safeStorage', payload: (await safeStorage.encryptStringAsync(raw)).toString('base64') };
   }
   console.warn('[accounts] chiffrement safeStorage indisponible : écriture en clair');
   return { ...base, encryption: 'none', payload: raw };
@@ -116,11 +129,19 @@ async function decodeFile(filePath) {
   const meta = { schema, newer };
   if (env.encryption === 'none') return { status: 'ok', raw: env.payload, encryption: 'none', ...meta };
   if (env.encryption === 'safeStorage') {
+    let res;
     try {
-      return { status: 'ok', raw: safeStorage.decryptString(Buffer.from(env.payload, 'base64')), encryption: 'safeStorage', ...meta };
+      await app.whenReady();
+      res = await safeStorage.decryptStringAsync(Buffer.from(env.payload, 'base64'));
     } catch (_) {
       return { status: 'undecryptable' };
     }
+    if (!res || typeof res.result !== 'string') return { status: 'undecryptable' };
+    // Clé renouvelée par Chromium : on ne réécrit PAS le fichier pour autant
+    // (une version plus ancienne ne connaîtrait peut-être pas la nouvelle
+    // clé). Le prochain enregistrement normal utilisera la nouvelle clé.
+    if (res.shouldReEncrypt) console.warn('[accounts] clé de chiffrement renouvelée : utilisée au prochain enregistrement');
+    return { status: 'ok', raw: res.result, encryption: 'safeStorage', ...meta };
   }
   return { status: 'corrupt' };
 }
@@ -281,14 +302,14 @@ async function migrateMainFile(cur) {
     if (problem) throw new Error('validation : ' + problem);
 
     const raw = JSON.stringify(migrated);
-    await writeAtomic(file(MAIN_FILE), encode(raw, to));
+    await writeAtomic(file(MAIN_FILE), await encode(raw, to));
     const back = await decodeFile(file(MAIN_FILE));
     if (back.status !== 'ok' || back.raw !== raw || back.schema !== to) {
       await copyAtomic(backupPath, file(MAIN_FILE));
       throw new Error('relecture différente après écriture');
     }
     console.log(`[accounts] données migrées du schéma ${from} au schéma ${to} (sauvegarde : ${path.basename(backupPath)})`);
-    return { status: 'ok', accounts: migrated, encrypted: canEncrypt(), migrated: { from, to, backupFile: path.basename(backupPath) } };
+    return { status: 'ok', accounts: migrated, encrypted: await canEncrypt(), migrated: { from, to, backupFile: path.basename(backupPath) } };
   } catch (err) {
     console.error(`[accounts] migration du schéma ${from} au schéma ${to} impossible :`, err.code || err.message);
     // Données d'origine intactes : affichées, mais l'app ne les réécrit pas.
@@ -318,11 +339,13 @@ async function loadInner() {
     // Écrit en clair faute de chiffrement lors d'un lancement précédent :
     // on rechiffre dès que c'est possible. Un échec n'empêche pas de
     // travailler (le fichier en clair reste valide) : on le signale.
-    if (cur.encryption === 'none' && canEncrypt()) {
-      await writeAtomic(file(MAIN_FILE), encode(cur.raw, cur.schema))
+    const encrypted = await canEncrypt();
+    if (cur.encryption === 'none' && encrypted) {
+      await encode(cur.raw, cur.schema)
+        .then(env => writeAtomic(file(MAIN_FILE), env))
         .catch(err => console.warn('[accounts] rechiffrement reporté :', err.code || err.message));
     }
-    return { status: 'ok', accounts, encrypted: canEncrypt() };
+    return { status: 'ok', accounts, encrypted };
   }
   // corrompu, ou chiffré par un autre compte Windows / clé DPAPI perdue
   return { status: cur.status === 'undecryptable' ? 'undecryptable' : 'corrupt', backup: await backupInfo() };
@@ -357,8 +380,8 @@ function save(list) {
       // Fichier illisible : mis de côté (jamais détruit).
       if (cur.status !== 'missing') await moveAside(mainPath, 'unreadable');
     }
-    await writeAtomic(mainPath, encode(raw, currentSchema));
-    return { ok: true, encrypted: canEncrypt() };
+    await writeAtomic(mainPath, await encode(raw, currentSchema));
+    return { ok: true, encrypted: await canEncrypt() };
   }).catch(err => {
     console.error('[accounts] échec d\'enregistrement :', err.code || err.message);
     return { ok: false, error: 'écriture impossible' };
@@ -416,13 +439,13 @@ function migrateLegacy(payload) {
       source: 'localStorage (1.0.4)', createdAt: new Date().toISOString(),
       keys: { ai_accounts: current == null ? null : current, ai_accounts_backup: backup == null ? null : backup }
     });
-    await writeAtomic(preFile, encode(preRaw));
+    await writeAtomic(preFile, await encode(preRaw));
 
     const written = [[preFile, preRaw]];
     // Les listes de la 1.0.4 sont au schéma 1 : si l'app en est à un schéma
     // plus récent, le chargement qui suit les migre (avec sa sauvegarde).
-    if (backup != null) { await writeAtomic(file(BAK_FILE), encode(backup, 1)); written.push([file(BAK_FILE), backup]); }
-    if (current != null) { await writeAtomic(file(MAIN_FILE), encode(current, 1)); written.push([file(MAIN_FILE), current]); }
+    if (backup != null) { await writeAtomic(file(BAK_FILE), await encode(backup, 1)); written.push([file(BAK_FILE), backup]); }
+    if (current != null) { await writeAtomic(file(MAIN_FILE), await encode(current, 1)); written.push([file(MAIN_FILE), current]); }
 
     for (const [p, expected] of written) {
       const back = await decodeFile(p);
@@ -432,7 +455,7 @@ function migrateLegacy(payload) {
         return { ok: false, error: 'verify' };
       }
     }
-    return { ok: true, encrypted: canEncrypt(), backupFile: path.basename(preFile) };
+    return { ok: true, encrypted: await canEncrypt(), backupFile: path.basename(preFile) };
   }).catch(err => {
     console.error('[accounts] migration impossible :', err.code || err.message);
     return { ok: false, error: 'write_failed' };

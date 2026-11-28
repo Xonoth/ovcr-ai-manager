@@ -7,7 +7,10 @@
 //
 // safeStorage simulé : « chiffrement » réversible ENC:<base64> — suffisant pour
 // tester l'enveloppe, la détection d'un fichier indéchiffrable (autre clé) et
-// le mode dégradé « chiffrement indisponible ».
+// le mode dégradé « chiffrement indisponible ». Seule l'API ASYNCHRONE est
+// simulée (l'API synchrone disparaît dans Electron 46) : un appel synchrone
+// oublié dans l'app fait donc échouer les tests. Pour lire un fichier chiffré
+// dans un test : fake.decrypt(buffer).
 
 const Module = require('module');
 const path = require('path');
@@ -19,6 +22,7 @@ const state = {
   userData: null,
   encryptionAvailable: true,
   keyId: 'cle-A',          // changer de clé = fichier écrit par un autre compte Windows
+  shouldReEncrypt: false,  // réponse de decryptStringAsync (clé renouvelée par Chromium)
   openDialogResult: { canceled: true, filePaths: [] },
   messageBoxResponse: { response: 1, checkboxChecked: false },
   messageBoxCalls: []
@@ -31,18 +35,23 @@ app.getPath = (name) => {
 };
 app.setPath = () => {};
 app.getVersion = () => '0.0.0-test';
+app.whenReady = () => Promise.resolve();
+
+function decrypt(buf) {
+  const t = buf.toString('utf8');
+  const prefix = `ENC:${state.keyId}:`;
+  if (!t.startsWith(prefix)) throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptStringAsync.');
+  return Buffer.from(t.slice(prefix.length), 'base64').toString('utf8');
+}
 
 const safeStorage = {
-  isEncryptionAvailable: () => state.encryptionAvailable,
-  encryptString(s) {
+  isAsyncEncryptionAvailable: async () => state.encryptionAvailable,
+  async encryptStringAsync(s) {
     if (!state.encryptionAvailable) throw new Error('indisponible');
     return Buffer.from(`ENC:${state.keyId}:` + Buffer.from(s, 'utf8').toString('base64'), 'utf8');
   },
-  decryptString(buf) {
-    const t = buf.toString('utf8');
-    const prefix = `ENC:${state.keyId}:`;
-    if (!t.startsWith(prefix)) throw new Error('Error while decrypting the ciphertext provided to safeStorage.decryptString.');
-    return Buffer.from(t.slice(prefix.length), 'base64').toString('utf8');
+  async decryptStringAsync(buf) {
+    return { result: decrypt(buf), shouldReEncrypt: state.shouldReEncrypt };
   }
 };
 
@@ -83,6 +92,7 @@ function cleanup() {
 function reset() {
   state.encryptionAvailable = true;
   state.keyId = 'cle-A';
+  state.shouldReEncrypt = false;
   state.openDialogResult = { canceled: true, filePaths: [] };
   state.messageBoxResponse = { response: 1, checkboxChecked: false };
   state.messageBoxCalls = [];
@@ -95,4 +105,4 @@ function freshRequire(modulePath) {
   return require(resolved);
 }
 
-module.exports = { electron, state, useTempUserData, cleanup, reset, freshRequire };
+module.exports = { electron, state, decrypt, useTempUserData, cleanup, reset, freshRequire };

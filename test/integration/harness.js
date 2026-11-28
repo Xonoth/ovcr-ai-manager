@@ -9,6 +9,8 @@
 // seed         : écrit les fichiers de départ (avant le chargement de main.js) ;
 // beforeWindow : après main.js, avant la fenêtre (ex. remplacer un handler IPC
 //                pour simuler une panne) ;
+// allowDeprecated : le scénario appelle LUI-MÊME une API dépréciée (sinon,
+//                toute API dépréciée utilisée fait échouer le scénario) ;
 // t            : { win, js, check, userData, delay, waitFor, consoleErrors, tmp }.
 
 const { app, BrowserWindow, ipcMain } = require('electron');
@@ -54,7 +56,18 @@ function scenario(name, opts, body) {
     results.push({ label, ok: !!ok });
     console.log(`${ok ? '  ✔' : '  ✖'} ${label}${!ok && detail !== undefined ? ' — ' + JSON.stringify(detail) : ''}`);
   };
+  // Electron signale une API dépréciée par console.warn("(electron) '…' is
+  // deprecated…"). On les relève pour que la prochaine montée de version ne
+  // laisse rien passer en silence (Electron 45 -> 46 : API retirées).
+  const deprecations = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    const first = typeof args[0] === 'string' ? args[0] : '';
+    if (first.startsWith('(electron)') && /deprecated/i.test(first)) deprecations.push(first);
+    originalWarn.apply(console, args);
+  };
   const finish = () => {
+    if (!opts.allowDeprecated) check('aucune API Electron dépréciée utilisée', deprecations.length === 0, deprecations);
     const failed = results.filter(r => !r.ok).length;
     console.log(`@@RESULT ${JSON.stringify({ name, total: results.length, failed })}`);
     if (ownsTmp) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* best effort */ } }

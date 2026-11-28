@@ -15,8 +15,10 @@ const SCENARIOS = [
   ['storage-failures.js'],
   ['storage-versions.js', { OVCR_SCENARIO: 'legacy' }],
   ['storage-versions.js', { OVCR_SCENARIO: 'newer' }],
+  ['storage-compat.js'],
   ['diagnostics.js'],
   ['webview-errors.js'],
+  ['browser-identity.js'],
   ['cooldowns.js'],
   ['single-instance.js']
 ];

@@ -5,6 +5,8 @@
 > tout ce qu'il faut savoir pour repartir sans refaire l'enquête.
 > Ce fichier n'est pas embarqué dans le `.exe`.
 
+> **Avancement (28 novembre 2026)** — **P1 fait** en version **1.3.0** (Electron 45.3.2, Chromium 156, `safeStorage` asynchrone), tous les tests automatiques verts (112 unitaires, 143 vérifications d'intégration, perf, lint) ; détail dans PROJECT_CONTEXT §13 « Phase 3 ». **Validée à la main par l'utilisateur** (`TESTS-MANUELS.md` §0), zip `dist/OVCR-AI-Manager-1.3.0.zip` créé. Pas de release GitHub. Corrections des faits datés ci-dessous : la fin de vie de la 43 est annoncée pour **janvier 2027** (et non mi-décembre) ; 43.8.13 existe ; `package.json` est désormais en version figée. Décisions P2 à P9 (§4) : **pas encore prises**. Nouveau point pour P8 : vérifier qu'un arrêt brutal juste après le tout premier chiffrement ne rend pas `accounts.json` illisible (la clé vit dans `Local State`, écrit surtout à la fermeture).
+
 ---
 
 ## 0. Comment démarrer la session

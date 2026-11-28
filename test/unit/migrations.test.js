@@ -17,7 +17,7 @@ const p = name => path.join(dir, name);
 const env = name => JSON.parse(fs.readFileSync(p(name), 'utf8'));
 const payloadOf = name => {
   const e = env(name);
-  const raw = e.encryption === 'none' ? e.payload : fake.electron.safeStorage.decryptString(Buffer.from(e.payload, 'base64'));
+  const raw = e.encryption === 'none' ? e.payload : fake.decrypt(Buffer.from(e.payload, 'base64'));
   return JSON.parse(raw);
 };
 const backups = () => (fs.existsSync(p('backups')) ? fs.readdirSync(p('backups')) : []);

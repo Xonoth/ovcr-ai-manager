@@ -73,6 +73,39 @@ test('« autoriser une fois » : accordé mais non mémorisé', async () => {
   assert.equal(fake.state.messageBoxCalls.length, 2);
 });
 
+// Electron 45 : la capture d'écran arrive sous le nom « display-capture » (et
+// non plus « media » sans mediaTypes) ; « media » ne couvre que micro/caméra.
+test('capture d\'écran (display-capture) : question dédiée, mémorisée à part du micro', async () => {
+  fake.state.messageBoxResponse = { response: 0, checkboxChecked: true };
+  assert.equal(await request('https://chatgpt.com/', 'display-capture'), true);
+  assert.equal(fake.state.messageBoxCalls.length, 1);
+  assert.match(fake.state.messageBoxCalls[0].message, /chatgpt\.com demande à capturer votre écran\./);
+  assert.doesNotMatch(fake.state.messageBoxCalls[0].message, /micro|caméra/);
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'site-permissions.json'), 'utf8'));
+  assert.equal(saved['https://chatgpt.com|display-capture'], 'allow');
+  assert.equal(saved['https://chatgpt.com|media:audio'], undefined, 'le micro n\'est pas accordé avec l\'écran');
+
+  // Redemande : choix mémorisé, aucune nouvelle question ; vérification synchrone cohérente.
+  assert.equal(await request('https://chatgpt.com/', 'display-capture'), true);
+  assert.equal(fake.state.messageBoxCalls.length, 1);
+  assert.equal(handlers.check(null, 'display-capture', 'https://chatgpt.com'), true);
+
+  // Micro demandé ensuite (media + mediaTypes audio) : question distincte.
+  fake.state.messageBoxResponse = { response: 1, checkboxChecked: true };
+  assert.equal(await request('https://chatgpt.com/', 'media', { mediaTypes: ['audio'] }), false);
+  assert.equal(fake.state.messageBoxCalls.length, 2);
+  assert.match(fake.state.messageBoxCalls[1].message, /utiliser votre micro\./);
+});
+
+test('capture d\'écran refusée et mémorisée : refusée sans question, y compris en vérification', async () => {
+  fake.state.messageBoxResponse = { response: 1, checkboxChecked: true };
+  assert.equal(await request('https://claude.ai/', 'display-capture'), false);
+  assert.equal(await request('https://claude.ai/', 'display-capture'), false);
+  assert.equal(fake.state.messageBoxCalls.length, 1);
+  assert.equal(handlers.check(null, 'display-capture', 'https://claude.ai'), false);
+  assert.equal(await request('file:///C:/app/index.html', 'display-capture'), false, 'jamais pour l\'interface locale');
+});
+
 test('vérification synchrone : notifications non accordées tant que non décidées', () => {
   assert.equal(handlers.check(null, 'notifications', 'https://claude.ai'), false);
   assert.equal(handlers.check(null, 'geolocation', 'https://claude.ai'), true, 'laisse la page tenter -> question');

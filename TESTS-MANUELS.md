@@ -9,6 +9,21 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
+## 0. Version 1.3.0 (Electron 45) — à faire en priorité
+
+La 1.3.0 change de moteur (Chromium 150 → 156) et d'API de chiffrement des
+comptes. Les tests automatiques couvrent le format et l'identité navigateur,
+**pas** les vrais services ni le vrai profil.
+
+- [ ] **Sauvegarde** : app fermée, copier `%APPDATA%\ai-manager` ailleurs.
+- [ ] Lancer la 1.3.0 sur le vrai profil : tous les comptes sont là ; `?` → « Diagnostic » indique la version 1.3.0, « Stockage : ok, N compte(s), chiffré ».
+- [ ] Ouvrir 2 ou 3 services déjà connectés : sessions conservées (pas de reconnexion).
+- [ ] **Gemini** et une popup **« Continuer avec Google »** (Claude ou Perplexity, idéalement avec un vrai compte, voir l'avertissement de PROJECT_CONTEXT sur les essais répétés) : la page Google s'affiche, la connexion aboutit, **aucun** « Ce navigateur ou cette application ne sont peut-être pas sécurisés ».
+- [ ] Claude et ChatGPT : pas de boucle de vérification Cloudflare.
+- [ ] Modifier un compte (ou « Épuiser » un service), fermer, rouvrir : modification conservée.
+- [ ] **Retour arrière** (sur la COPIE ou après la sauvegarde) : fermer la 1.3.0, lancer le `.exe` du zip **1.2.0** : les comptes (y compris la modification faite en 1.3.0) sont lus, aucun écran « illisible ». Puis relancer la 1.3.0 : tout est toujours là.
+- [ ] (Si utilisé) partage d'écran dans un service : la question dit « capturer votre écran » (et non « micro et caméra »).
+
 ## 1. Mise à jour depuis la 1.1.0 (vrai profil)
 
 - [ ] Lancer la nouvelle version sur le profil existant : tous les comptes sont là, mêmes noms, mêmes profils, mêmes cooldowns.
