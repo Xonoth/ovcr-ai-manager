@@ -99,7 +99,7 @@ ai-manager/
   - Les **tests manuels** (vrais services IA, OAuth, vraie coupure réseau…) sont listés dans `TESTS-MANUELS.md`.
 - **Construire le .exe** : `npm run dist` (= `node scripts/dist.js` ; la version vient **uniquement** du champ `"version"` de `package.json` depuis la 1.6.0)
   → produit `dist/[OVCR] AI Manager-win32-x64/` contenant `[OVCR] AI Manager.exe` (dossier complet requis, l'exe seul ne suffit pas).
-  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-<version>.zip` (dernier livré : 1.6.0, 142,3 Mo, dossier complet — 128 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
+  → pour partager : zipper ce dossier. Un zip prêt à distribuer existe déjà : `dist/OVCR-AI-Manager-<version>.zip` (dernier livré : 1.9.0, 142,3 Mo, dossier complet — 128 fichiers — à la racine). Le nom du zip porte la version depuis la 1.0.1, pour qu'un membre sache ce qu'il a téléchargé.
   → `scripts/dist.js` enchaîne automatiquement `node scripts/fuses.js` (fuses appliqués puis relus : le build **échoue** si l'état diffère ou si l'empreinte d'`app.asar` manque), puis `node scripts/prune-locales.js` (purge des locales Chromium hors fr/en-US/en-GB : −44,9 Mo) et exclut les traductions Monaco `editor.main.nls.<langue>.js` (Monaco tourne avec ses libellés anglais de base, seul `editor.main.nls.js` est gardé).
 - Le **.exe n'est pas signé** → Windows SmartScreen affiche un avertissement aux utilisateurs (normal).
 
@@ -107,7 +107,7 @@ ai-manager/
 
 > **Recréer le zip** (PowerShell, à cause des crochets `[ ]` dans le nom de dossier qui cassent l'expansion `-Path`) :
 > ```powershell
-> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.6.0.zip" -CompressionLevel Optimal
+> Compress-Archive -LiteralPath "dist\[OVCR] AI Manager-win32-x64" -DestinationPath "dist\OVCR-AI-Manager-1.9.0.zip" -CompressionLevel Optimal
 > ```
 
 ## 5. Données & stockage
@@ -551,7 +551,7 @@ Décisions de l'utilisateur (28/11/2026) : faire P5 maintenant ; **pont `file://
 - **Pont** (`legacy-storage.js`) : fenêtre cachée sur `legacy-bridge/legacy-storage.html` (aucun script, CSP `default-src 'none'`, sans preload, sandbox), script court exécuté par le main (`executeJavaScript`, clés et valeurs passées par `JSON.stringify`), clés `ai_accounts`, `ai_accounts_backup`, `prefs_schema`, `ide_w`, `explorer_w`, `collapsed_accounts` seulement, 8 Mo par valeur, délai 10 s, une opération à la fois. Utilisé : (1) au chargement quand il n'y a **aucun compte** (`storage:legacy-accounts`), pour la migration 1.0.4 — le main efface l'ancienne copie en clair après une migration réussie ; (2) au premier lancement en `app://` (`prefs_schema` absent) pour reprendre une fois les préférences (`storage:legacy-prefs`, `OVCR.layout.importLegacyPrefs`) — l'ancienne copie est laissée ; (3) au retour arrière : c'est désormais le **main** qui réécrit les comptes au format 1.0.4, puis met les fichiers de côté seulement si l'écriture a réussi ; `pendingRevert()` ne renvoie plus que `{ ok }`. Pont en panne : démarrage normal, préférences par défaut, rien d'effacé (testé).
 - **Tests** : 164 unitaires (`app-protocol.test.js` 10 ; `security-policy` et `site-permissions` adaptés), 396 vérifications d'intégration (nouveaux : `legacy-bridge.js`, `upgrade-1.8.js` en deux modes ; `smoke` : adresse et origine, fichiers refusés par `app://`, `fetch` hors app refusé, retour vers `file://` bloqué, IPC refusé depuis l'ancienne interface ; migration 1.0.4 et retour arrière lus et écrits dans l'origine `file://` comme la 1.0.4), `npm run test:fuses` 28 (trois lancements avec les vrais modules et les vrais fuses : la 1.8.0 écrit, la 1.9.0 sert l'interface avec worker et `fetch` depuis `app.asar.unpacked` et passe par le pont, un dernier lancement `file://` relit le retour arrière ; témoin fuse coupé), perf 8/8, ESLint 0 signalement. Le banc d'essai fournit `openOldFilePage()` (page `file://` jetable jouant l'ancienne interface).
 - **Build** : `app.asar` = les 253 entrées de la 1.8.0 + `app-protocol.js`, `legacy-storage.js`, `legacy-bridge/` et sa page, aucun fichier interne, version 1.9.0, fuses appliqués et relus (inchangés).
-- **En attente de la validation à la main** (`TESTS-MANUELS.md`, section « Version 1.9.0 »).
+- **Validé à la main par l'utilisateur** le 28/11/2026 avec le vrai `.exe` 1.9.0 et le vrai profil (`TESTS-MANUELS.md`, section « Version 1.9.0 »), puis livré : zip `dist/OVCR-AI-Manager-1.9.0.zip` (142,3 Mo, 128 fichiers, mêmes chemins que la 1.8.0). Pas de release GitHub.
 
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (le plus souvent un module de `renderer/` — voir §3 et §7 — ou `index.html`, parfois `main.js` / un module du main), rappelle que c'est du **JS vanilla en script classique** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).

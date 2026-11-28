@@ -9,7 +9,7 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
-## Version 1.9.0 (interface en app://, phase 3 P5) — à valider
+## Version 1.9.0 (interface en app://, phase 3 P5) — validée le 28/11/2026
 
 La 1.9.0 ne charge plus l'interface en `file://` mais en `app://ovcr`. Son
 stockage local (préférences d'affichage) est donc neuf : au premier lancement,
