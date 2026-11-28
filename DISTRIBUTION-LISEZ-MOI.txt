@@ -138,6 +138,13 @@ BON A SAVOIR
   un nom, un email et un profil, puis clique sur une IA pour l'ouvrir et
   te connecter normalement.
 
+- Sauvegarder ou changer de PC (version 1.8.0) : dans l'en-tete
+  "Comptes enregistres", la fleche vers le haut EXPORTE la liste de tes
+  comptes dans un fichier, la fleche vers le bas l'IMPORTE. Attention :
+  ce fichier est EN CLAIR (noms, e-mails, profils lisibles par qui
+  l'ouvre) : range-le en lieu sur. Il ne contient NI mot de passe NI
+  session : sur un autre PC, il faudra te reconnecter a chaque IA.
+
 - Tes donnees restent sur TA machine. L'application n'envoie rien a la
   communaute ni a un serveur OverCreep ; elle ouvre juste les sites des
   IA dans des panneaux isoles.

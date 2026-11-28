@@ -22,6 +22,7 @@ Pensé à l'origine pour la communauté [OverCreep](https://overcreep.ovh), publ
 - **9 services IA intégrés** : Claude, ChatGPT, Gemini, Perplexity, Z.ai, Grok, Leonardo AI (images), Suno (musique), Meshy AI (3D). En ajouter un est un pattern simple et documenté (voir [Contribuer](#contribuer)).
 - **Suivi de quota (« cooldown ») 24 h** par service et par compte : un clic sur « Épuiser (24h) » marque le service comme vidé, avec compte à rebours visible et réactivation automatique (« ✓ Fini 14:05 »). Le suivi est **manuel** : l'app ne lit pas le quota réel des services. Annuler un cooldown en cours demande une confirmation ; une échéance incohérente (horloge de l'ordinateur modifiée) est signalée.
 - **1 ou 2 panneaux IA** côte à côte, colonnes redimensionnables, bouton « Fermer le panneau 2 » pour libérer la mémoire de la webview cachée.
+- **Export / import des comptes** (boutons de l'en-tête des comptes) : fichier JSON **en clair** (noms, e-mails, profils, cooldowns ; jamais de cookies ni de sessions), pour sauvegarder ou changer de PC. À l'import : résumé, et un choix pour les comptes en conflit (ignorer, remplacer, ou importer comme nouveaux comptes) ; copie de la liste actuelle faite avant.
 - **Palette rapide (Ctrl+K)** : ouvrir n'importe quel service avec n'importe quel compte au clavier.
 - **Page d'aide intégrée** (bouton `?`) : description et cas d'usage de chaque IA, pour les utilisateurs qui ne les connaissent pas toutes.
 - **Éditeur de code intégré** (Monaco, celui de VS Code) avec explorateur de fichiers local — chargé paresseusement au premier clic, avec éditeur de secours si Monaco échoue.
@@ -82,11 +83,12 @@ ai-manager/
 ├── diagnostics.js          # Journal local expurgé + erreurs non interceptées
 ├── file-access.js          # Accès aux fichiers de l'explorateur/éditeur (validation des chemins)
 ├── accounts-store.js       # Stockage chiffré des comptes (safeStorage), schéma versionné, migrations, récupération, retour arrière
+├── accounts-transfer.js    # Export / import des comptes (format, validation, conflits ; fonctions pures)
 ├── browser-identity.js     # Identité navigateur (Firefox sur Google, Chrome ailleurs) pour la connexion Google
 ├── browser-identity-preload.js # Preload : aligne ce que voient les pages Google
 ├── site-permissions.js     # Autorisations des sites : question à l'utilisateur au lieu d'un accord d'office
 ├── assets/
-│   ├── icons.js            # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
+│   ├── icons.js            # Icônes SVG inline (sous-ensemble Font Awesome + 2 dessinées) + hydrateIcons()
 │   └── fonts/              # Polices WOFF2 locales (Space Grotesk, Inter, JetBrains Mono)
 ├── scripts/                # Outils de build (exclus du .exe) : purge des locales, fuses Electron
 ├── test/                   # Tests unitaires (node:test) et d'intégration (Electron) — exclus du .exe
@@ -119,6 +121,7 @@ Le détail complet (modèle, migration, retour arrière, limites) est dans [SECU
 - La fenêtre hôte ne peut pas naviguer vers une URL distante ni ouvrir de fenêtre ; les popups des webviews sont filtrées par **liste blanche d'origines** (les 9 services + fournisseurs OAuth courants), tout le reste part dans le navigateur système (5 liens par minute et par page au plus). Une popup de connexion se ferme avec le panneau qui l'a ouverte.
 - **Autorisations des sites demandées, plus accordées d'office** : position, micro, caméra, notifications, lecture du presse-papiers, capture d'écran et ouverture d'applications externes déclenchent une question (« Autoriser / Refuser », mémorisable par site). Le reste (USB, MIDI, série…) est refusé. Bouton « Réinitialiser les autorisations des sites » dans la page d'aide (`?`).
 - **Exécutable durci (fuses Electron)** : le `.exe` ne peut plus servir de Node.js (`ELECTRON_RUN_AS_NODE`), ignore `NODE_OPTIONS` et `--inspect`, ne charge l'app que depuis `app.asar` et refuse de démarrer si cette archive a été modifiée ; depuis la 1.5.0, il chiffre les cookies des sessions.
+- **Export des comptes en clair** (choix assumé, annoncé avant chaque export) : le fichier contient noms, e-mails, profils et cooldowns, **jamais** de cookies ni de sessions. Le chemin est choisi dans une boîte de dialogue du processus principal ; un import est validé strictement et précédé d'une copie de la liste actuelle.
 - Garde-fous divers : unicité des profils (pas de partage de session accidentel), limite de taille des fichiers ouverts dans l'éditeur, stockage tolérant à la corruption avec backup, **une seule instance** de l'app à la fois (pas d'écritures concurrentes).
 - Journal de diagnostic **local et expurgé** ; « Ouvrir dans le navigateur » n'accepte que l'adresse https d'un service connu.
 

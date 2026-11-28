@@ -9,6 +9,25 @@ vrai profil. Cette liste est à dérouler **à la main** avant une diffusion.
 > sessions). Cocher chaque case ; noter tout écart avec le diagnostic
 > (`?` → « Diagnostic » → « Copier le diagnostic »).
 
+## Version 1.8.0 (export / import des comptes, phase 3 P7) — validée le 28/11/2026
+
+La 1.8.0 ajoute l'export et l'import de la liste des comptes (boutons de
+l'en-tête des comptes). Le format des données enregistrées ne change pas
+(retour à la 1.7.0 possible sans perte). `npm run test:electron` couvre les
+deux parcours avec des boîtes de dialogue simulées, mais **pas** les vraies
+boîtes Windows, le vrai `.exe` ni le vrai profil.
+
+- [ ] **Sauvegarde** : app fermée, copier `%APPDATA%\ai-manager` ailleurs.
+- [ ] **Démarrage** : lancer le `.exe` 1.8.0 sur le vrai profil : tous les comptes sont là. `?` → « Diagnostic » indique **1.8.0**. Clic droit sur le `.exe` → Propriétés → Détails : version **1.8.0**.
+- [ ] **Boutons** : dans l'en-tête « Comptes enregistrés », deux nouvelles icônes (flèche vers le haut = exporter, flèche vers le bas = importer), avec leur info-bulle.
+- [ ] **Export** : cliquer sur Exporter : l'avertissement « en clair » s'affiche avec le bon nombre de comptes. « Choisir l'emplacement… » ouvre la **vraie** boîte « Enregistrer sous » (dossier Documents, nom `ovcr-comptes-<date>.json`). L'annuler : l'avertissement reste. Recommencer et enregistrer sur le Bureau : message « N compte(s) exporté(s) dans … ». Ouvrir le fichier dans le Bloc-notes : comptes lisibles, **aucun** cookie ni mot de passe.
+- [ ] **Import identique** : Importer → choisir ce fichier : « déjà présents, à l'identique : rien à importer ».
+- [ ] **Import avec conflit** : dans le Bloc-notes, changer le `name` d'un compte du fichier et enregistrer. Importer : le résumé nomme ce compte en conflit, « Ignorer » est coché. « Annuler » : rien ne change. Recommencer avec « Remplacer » : le compte prend le nouveau nom, sa session est conservée (ouvrir un service).
+- [ ] **Sauvegarde préalable** : `%APPDATA%\ai-manager\backups` contient un `pre-import-<date>.json` (illisible en clair : chiffré).
+- [ ] **Fichier refusé** : importer un fichier qui n'est pas un export (ex. un `.json` quelconque) : message clair, rien ne change.
+- [ ] **Remettre le vrai nom** du compte modifié (bouton crayon), puis **supprimer le fichier exporté** du Bureau.
+- [ ] (Facultatif) **« Importer comme nouveaux comptes »** sur un compte en conflit : un compte apparaît avec un nouveau profil (`profil_N`), sans session (il faudrait se reconnecter). Le supprimer ensuite.
+
 ## Version 1.7.0 (découpage de l'interface, phase 3 P6) — validée le 28/11/2026
 
 La 1.7.0 ne change ni le format des données, ni les fuses, ni le processus

@@ -11,6 +11,7 @@
 - Suivre un **cooldown / quota 24h** par service et par compte (bouton « Épuiser (24h) »).
 - Éditer des fichiers locaux via un **éditeur de code intégré (Monaco)** avec un explorateur de fichiers.
 - Afficher **1 ou 2 panneaux IA** côte à côte (vue simple / vue scindée), avec **colonnes redimensionnables** à la souris.
+- **Exporter / importer** la liste des comptes (fichier JSON en clair, sans cookies ni sessions), avec choix explicite pour les comptes en conflit (depuis la 1.8.0).
 - Consulter une **page d'aide** (« Comprendre les IA disponibles », bouton `?` dans la barre du workspace) décrivant chaque service et son cas d'usage.
 
 C'est un outil **personnel / communautaire** (communauté « OverCreep »), au thème visuel **violet / rose**.
@@ -38,6 +39,7 @@ ai-manager/
 │   ├── editor.js       # (1.7.0) Éditeur : Monaco à la demande, éditeur de secours, dossier et fichiers, Ctrl+S.
 │   ├── layout.js       # (1.7.0) Préférences d'affichage (prefs), replis du tableau de bord / explorateur / éditeur, colonnes redimensionnables.
 │   ├── storage-ui.js   # (1.7.0) Comptes côté interface : saveAccounts, mode protégé et bandeaux, chargement, migration 1.0.4, retour arrière, récupération.
+│   ├── transfer-ui.js  # (1.8.0) Export / import des comptes : avertissement « en clair », résumé de l'import, choix unique pour les conflits.
 │   ├── accounts-ui.js  # (1.7.0) Liste des comptes : cartes et repli, statistiques, cooldowns, palette Ctrl+K, fenêtres d'ajout / modification / suppression.
 │   ├── panes.js        # (1.7.0) Panneaux de service : vue simple / scindée, webviews, écrans d'erreur, hors ligne, fermeture.
 │   └── app.js          # Démarrage (initApp : appelle les modules dans l'ordre), SERVICES, délégation des clics, COMMANDS, tick des cooldowns.
@@ -47,7 +49,8 @@ ai-manager/
 ├── atomic-file.js      # (phase 2) Écriture atomique (tmp + fsync + renommage, nouvelles tentatives si fichier verrouillé).
 ├── diagnostics.js      # (phase 2) Journal local expurgé (userData/logs), erreurs non interceptées, rapports de l'interface.
 ├── file-access.js      # Fichiers de l'explorateur/éditeur : racines autorisées, chemins résolus, limites (voir SECURITY.md §4).
-├── accounts-store.js   # Comptes : stockage chiffré safeStorage, sauvegardes, versionnement du schéma + migrations, récupération, retour arrière.
+├── accounts-store.js   # Comptes : stockage chiffré safeStorage, sauvegardes, versionnement du schéma + migrations, récupération, retour arrière, application d'un import.
+├── accounts-transfer.js # (1.8.0) Export / import, fonctions PURES : format du fichier exporté, lecture et validation d'un import, collisions et fusion.
 ├── eslint.config.js    # (phase 2) ESLint — développement uniquement, exclu du .exe.
 ├── test/               # (phase 2) unit/ (node:test), integration/ (Electron réel, userData temporaire), fixtures/, helpers/ — exclu du .exe.
 ├── TESTS-MANUELS.md    # (phase 2) Ce qui ne peut PAS être testé automatiquement (services IA réels, OAuth, vraie coupure réseau…).
@@ -61,7 +64,7 @@ ai-manager/
 │   ├── prune-locales.js # Post-build : supprime les locales Chromium inutiles (garde fr/en-US/en-GB), lancé par `npm run dist`
 │   └── fuses.js         # (phase 3, P2) Post-build : applique et relit les fuses Electron du .exe (jeu WANTED), vérifie l'empreinte d'app.asar
 ├── assets/
-│   ├── icons.js        # 20 icônes SVG inline (sous-ensemble Font Awesome) + hydrateIcons()
+│   ├── icons.js        # 22 icônes SVG inline (20 de Font Awesome, 2 dessinées pour l'export / import) + hydrateIcons()
 │   └── fonts/          # 6 .woff2 (Space Grotesk, Inter, JetBrains Mono ; sous-ensembles latin + latin-ext)
 ├── package.json        # Scripts, dépendances, config de build.
 ├── package-lock.json
@@ -77,7 +80,7 @@ ai-manager/
 
 - **Code de l'interface** (depuis la 1.7.0) : `renderer/app.js` ne contient plus que `async initApp()` (asynchrone : les comptes sont chargés depuis le processus principal), qui appelle les modules dans l'ordre d'avant le découpage. Chaque module est une IIFE en mode strict qui s'enregistre dans `window.OVCR` (`OVCR.editor`, `OVCR.panes`…), ne fait **rien à son chargement** (sauf `core.js`, qui installe les diagnostics) et expose `init(ctx)` : ses dépendances arrivent par `ctx` (`api`, `SERVICES`, fonctions d'autres modules). L'état partagé (comptes, mode protégé, vue, panneau actif, cartes repliées) est dans `OVCR.state`. Les fonctions appelées par les boutons restent sur `window` (`openModal`, `setLayout`…), avec les mêmes noms. Un module manquant (installation abîmée) donne l'écran « l'application n'a pas pu démarrer » ; `core.js` manquant, un message dédié.
 - `assets/icons.js` est chargé avant l'app (`<script src>` dans le `<head>`) et expose `window.OVCR_ICONS` + `window.hydrateIcons(root)`.
-- `main.js` : crée la fenêtre, fixe le dossier de données, **durcit la navigation/les popups/les webviews** (voir §10), et enregistre les canaux IPC (`files:*`, `accounts:*`, `storage:*`, `site-permissions:reset`), tous protégés par `isTrustedSender`.
+- `main.js` : crée la fenêtre, fixe le dossier de données, **durcit la navigation/les popups/les webviews** (voir §10), et enregistre les canaux IPC (`files:*`, `accounts:*` dont l'export / import depuis la 1.8.0, `storage:*`, `site-permissions:reset`), tous protégés par `isTrustedSender`.
 
 ## 4. Comment lancer / construire
 
@@ -113,7 +116,8 @@ Deux endroits distincts, à ne pas confondre :
    - `backups/` (rien n'y est jamais supprimé par l'app) :
      - `pre-migration-<date>.json` : état `localStorage` d'origine (1.0.4), chiffré, fait avant la migration ;
      - `pre-schema-v<n>-v<m>-<date>.json` : copie exacte du fichier avant une migration de schéma ;
-     - `bak-preserved-<raison>-<date>.json` : copie de `.bak` mise à l'abri quand le fichier principal est illisible ou absent (sinon deux enregistrements pouvaient écraser la seule sauvegarde valide — audit phase 2, C1).
+     - `bak-preserved-<raison>-<date>.json` : copie de `.bak` mise à l'abri quand le fichier principal est illisible ou absent (sinon deux enregistrements pouvaient écraser la seule sauvegarde valide — audit phase 2, C1) ;
+     - `pre-import-<date>.json` (1.8.0) : copie exacte (chiffrée) du fichier principal avant chaque import appliqué.
    - Fichier illisible → jamais supprimé : renommé (ou copié) `accounts.unreadable-<date>.json`.
    - Le renderer n'écrit jamais ces fichiers : `saveAccounts()` envoie un instantané par `window.ovcr.accounts.save()`, le main **valide** (types, tailles, couleur `#hex`, profil non vide sans caractère de contrôle) puis écrit de façon **atomique** (`atomic-file.js` : temporaire + `fsync` + renommage, nouvelles tentatives si un antivirus verrouille brièvement le fichier), une écriture à la fois, et retarde la fermeture de l'app (5 s max) tant qu'une écriture est en cours.
    - **Statuts de lecture** (`load()`) : `ok`, `empty` (vrai premier lancement), `missing` (principal absent mais `.bak` lisible → restauration proposée), `corrupt` (y compris JSON valide qui n'est pas un tableau), `undecryptable`, `newer` (schéma/conteneur plus récent → **lecture seule**), `migration_failed` (données d'origine intactes → **lecture seule**).
@@ -121,6 +125,7 @@ Deux endroits distincts, à ne pas confondre :
    - **Versionnement** : `schema` dans l'enveloppe (absent = 1). La charge utile reste **un tableau** à tous les schémas → une version antérieure (1.1.0) relit toujours tous les comptes. Migrations dans `MIGRATIONS` (`accounts-store.js`), fonctions pures et idempotentes, avec sauvegarde préalable, validation (aucun compte perdu, ids et profils inchangés), écriture atomique puis relecture ; interrompue → refaite au lancement suivant. Schéma courant : **1** (aucune migration réelle n'a encore été nécessaire ; le mécanisme est testé avec des migrations factices).
    - **Migration automatique** au 1er lancement : les anciennes clés `localStorage` `ai_accounts` / `ai_accounts_backup` sont reprises telles quelles, vérifiées, puis effacées. **Retour arrière** : lancer avec `--revert-storage-migration` (voir SECURITY.md §5).
    - **Chargement résilient** : donnée corrompue, indéchiffrable ou fichier principal introuvable → modale proposant la sauvegarde ; « Continuer sans restaurer » garde une copie de la sauvegarde dans `backups/`.
+   - **Export / import** (1.8.0, §13 « Phase 3 — P7 ») : fichier choisi par l'utilisateur dans les boîtes du main, **en clair** (`{format:"ovcr-accounts-export", version:1, schema, app, exportedAt, accounts}`), jamais de cookies ; l'import est validé strictement, appliqué par le main dans la même file d'écriture que les enregistrements, après une copie dans `backups/`.
    - **Réparation au chargement** (`migrateOldAccounts()`, renderer) : services/cooldowns manquants complétés ; **profil vide ou invalide** (accepté par la 1.0.4) remplacé par le premier `profil_N` libre, avec un message — sans cela, le main refusait d'enregistrer TOUTE la liste (bug réel, trouvé en phase 2).
 2. **Préférences d'affichage** → `localStorage` du renderer (non sensibles, en clair), via l'objet `prefs` (`OVCR.layout.createPrefs()`, `renderer/layout.js`), créé au démarrage **après** le retour arrière éventuel :
    - Clé `prefs_schema` (absente = 1) : préférences d'une version plus récente → lues, jamais réécrites.
@@ -180,7 +185,7 @@ Les boutons de service d'une carte sont posés dans `.services-grid`, une **gril
 
 ## 7. Fonctionnalités & fonctions clés (`renderer/*.js`)
 
-Où vit quoi depuis la 1.7.0 : cartes, repli, cooldowns, palette et fenêtres de compte → `accounts-ui.js` ; `openService`, `mountService`, `setLayout`, `closePane2` → `panes.js` ; éditeur et fichiers → `editor.js` ; replis des colonnes et redimensionnement → `layout.js` ; aide et diagnostic → `diagnostics-ui.js` ; `saveAccounts`, `ensureWritable`, `showRecoveryUI`, export/import → `storage-ui.js` ; `escapeHtml`, `showToast` → `core.js` ; délégation et `COMMANDS` → `app.js`.
+Où vit quoi depuis la 1.7.0 : cartes, repli, cooldowns, palette et fenêtres de compte → `accounts-ui.js` ; `openService`, `mountService`, `setLayout`, `closePane2` → `panes.js` ; éditeur et fichiers → `editor.js` ; replis des colonnes et redimensionnement → `layout.js` ; aide et diagnostic → `diagnostics-ui.js` ; `saveAccounts`, `ensureWritable`, `showRecoveryUI` → `storage-ui.js` ; export / import (`exportAccounts`, `importAccounts`) → `transfer-ui.js` (1.8.0) ; `escapeHtml`, `showToast` → `core.js` ; délégation et `COMMANDS` → `app.js`.
 
 - `renderAccounts()` — rend les cartes de comptes (avatar, boutons de service, cooldowns). **Toutes les données de compte sont échappées** (`escapeHtml`) et les cartes n'ont **plus d'`onclick` inline** : les actions passent par des `data-*` lus par la délégation d'événements (voir plus bas). Quand la liste est **vide**, affiche un bouton d'appel à l'action « Créer mon premier compte ».
 - **Vue compacte (repli/dépli des cartes)** : cliquer sur le **header** d'une carte (`data-action="toggle-collapse"` sur `.account-header` — les boutons éditer/supprimer imbriqués gardent la priorité via `closest()`) replie/déplie sa grille de services ; repliée, la carte affiche un badge **« N/9 »** (services hors cooldown / total, ambré si un cooldown est actif, resynchronisé par le tick des cooldowns) + un chevron pivoté. Un bouton global « Tout replier / Tout déplier » (`#btnToggleAllCards`, dans l'en-tête de la liste) bascule toutes les cartes. Fonctions : `toggleCardCollapse(accId)`, `toggleAllCards()`, `saveCollapsed()` ; état persisté dans `localStorage.collapsed_accounts` (voir §5) ; défaut = tout déplié ; `openService` **déplie automatiquement** la carte du compte utilisé (utile depuis la palette Ctrl+K). Animation CSS pure (`grid-template-rows: 1fr → 0fr` sur `.services-wrap`, enfant `overflow:hidden`).
@@ -200,7 +205,7 @@ Où vit quoi depuis la 1.7.0 : cartes, repli, cooldowns, palette et fenêtres de
 - **Sécurité / robustesse (lot de durcissement A/B/C/D)** :
   - `escapeHtml(str)` — échappe `& < > " '`. À utiliser **partout** où une donnée utilisateur (nom/email/profil de compte, nom de fichier) est injectée en `innerHTML`. (Le renderer n'a plus Node et la CSP bloque les scripts inline, mais on garde les deux barrières.)
   - **Délégation d'événements** : un seul listener `click` par conteneur stable (`#accountsList`, `#paletteResults`, `#fileList`) lit `data-action`/`data-acc`/`data-svc`/`data-path`. Plus aucune donnée n'est injectée dans un attribut `onclick` généré. (Les `onclick` **statiques** codés en dur, sans donnée utilisateur, sont conservés.)
-  - `saveAccounts(list)` / `exportAccountsJSON()` / `importAccountsJSON(text)` / `showRecoveryUI()` — stockage résilient (désormais côté main, voir §5) + fondation d'un futur export/import JSON. Le main ne recopie l'ancienne génération dans `accounts.json.bak` que si elle est **valide** (ne détruit jamais un bon backup).
+  - `saveAccounts(list)` / `showRecoveryUI()` — stockage résilient (désormais côté main, voir §5). (Les anciennes fondations `exportAccountsJSON()` / `importAccountsJSON()`, jamais branchées, sont remplacées en 1.8.0 par `transfer-ui.js`.) Le main ne recopie l'ancienne génération dans `accounts.json.bak` que si elle est **valide** (ne détruit jamais un bon backup).
 - **Icônes** : `hydrateIcons(root)` (dans `assets/icons.js`) remplace chaque `<span class="ic" data-icon="NOM">` par son SVG. Appelé au démarrage (HTML statique) et après chaque `innerHTML` dynamique. Ajouter une icône = ajouter une entrée `{vb, p}` dans `window.OVCR_ICONS` (viewBox + path).
 
 ## 8. UI / Thème (communauté OverCreep, violet / rose)
@@ -251,7 +256,7 @@ Où vit quoi depuis la 1.7.0 : cartes, repli, cooldowns, palette et fenêtres de
 
 - Réorganiser/renommer les comptes par glisser-déposer ; regrouper par « équipe ».
 - Rafraîchir/recharger un webview, bouton « déconnexion » d'un profil.
-- Import/export de la liste de comptes (JSON). *(Fondation déjà en place : `exportAccountsJSON()` / `importAccountsJSON()` dans `index.html` — il ne manque que l'UI qui les branche.)*
+- ~~Import/export de la liste de comptes (JSON).~~ **Fait en 1.8.0** (§13 « Phase 3 — P7 »).
 - Thèmes multiples / réglages.
 - Raccourcis clavier pour basculer entre comptes.
 - Notifications quand un cooldown se termine.
@@ -517,6 +522,19 @@ Décision de l'utilisateur (28/11/2026) : fuse `EnableCookieEncryption` **activ�
 - **Build** : `app.asar` = les 244 entrées de la 1.6.0 + les 7 nouveaux scripts, aucun fichier interne, version 1.7.0 dans le `.exe`.
 - **Validé à la main par l'utilisateur** le 28/11/2026 avec le vrai `.exe` 1.7.0 et le vrai profil (`TESTS-MANUELS.md`, section « Version 1.7.0 »), puis livré : zip `dist/OVCR-AI-Manager-1.7.0.zip` (142,3 Mo, 128 fichiers, mêmes chemins que la 1.6.0). Pas de release GitHub.
 
+### Phase 3 — P7 : export / import des comptes (novembre 2026, version 1.8.0)
+
+Décisions de l'utilisateur (28/11/2026) : export **en clair** avec avertissement (pas de version chiffrée : relisible seulement sur ce compte Windows, elle n'apportait rien de plus que `backups/`) ; pour les conflits, **un seul choix** appliqué à tous ; boutons dans l'**en-tête des comptes**.
+
+- **Interface** (`renderer/transfer-ui.js`, boutons `btnExportAccounts` / `btnImportAccounts`, icônes `tray-export` / `tray-import` dessinées pour le projet) : avertissement avant l'export (noms, e-mails, profils, cooldowns **en clair** ; ni mot de passe, ni cookie, ni session) ; résumé de l'import (nouveaux, déjà présents, conflits nommés avec leurs profils) ; choix **Ignorer** (par défaut), **Remplacer** ou **Importer comme nouveaux comptes** ; import refusé en mode protégé (`ensureWritable`). Les noms lus dans un fichier sont affichés par `textContent` uniquement.
+- **Main** : l'interface ne voit **jamais** un chemin. `accounts:export` (boîte « Enregistrer sous », nom proposé `ovcr-comptes-AAAA-MM-JJ.json`, écriture atomique de la liste **du disque**, qui fait foi) ; `accounts:import-pick` (boîte « Ouvrir », lecture, validation, résumé : les comptes lus restent dans le main, liés à un **jeton à usage unique**) ; `accounts:import-apply(jeton, mode)` ; `accounts:import-cancel`. Seul le **nom** du fichier choisi repart vers l'interface.
+- **Fonctions pures** (`accounts-transfer.js`) : `buildExport`, `parseImport` (enveloppe `ovcr-accounts-export` ou tableau nu, 5 Mo, format ou schéma plus récent refusé, schéma plus ancien migré, validation **stricte** par `sanitizeList` : un compte invalide refuse tout le fichier ; doublons d'id ou de profil dans le fichier refusés), `planImport` (conflit = même id **ou** même profil ; strictement identique = « déjà présent », jamais un conflit), `applyImport`. « Remplacer » retire **tous** les comptes en conflit avec le compte importé (jamais deux comptes sur une session) ; « nouveaux comptes » donne un nouvel id et le premier `profil_N` libre, en sautant aussi les dossiers de `Partitions/` restés d'un compte supprimé (session vraiment vide ; seuls les **noms** des dossiers sont lus).
+- **Application** (`accountsStore.importAccounts`) : dans la file d'écriture (`serial`), mêmes refus que `save()` (`newer_schema`, `migration_pending`), copie du fichier principal dans `backups/pre-import-<date>.json`, fusion, validation stricte, écriture par le même chemin qu'un enregistrement (rotation `.bak` comprise). `save()` et l'import partagent désormais `writeInner()` / `writeBlocked()`.
+- **Défaut trouvé par les tests unitaires** avant toute intégration : avec deux comptes importés visant le même compte existant (l'un par l'id, l'autre par le profil), « Remplacer » désignait la cible par son id et retirait le compte qui venait d'être importé. Corrigé : cibles désignées par objet.
+- **Tests** : 152 unitaires (dont 16 pour `accounts-transfer.js` et 5 pour l'import dans `accounts-store.test.js`), 344 vérifications d'intégration (nouveaux scénarios `accounts-transfer.js`, 25, par le pont `window.ovcr` ; `ui-transfer.js` en deux modes, 23 + 5, par les boutons, avec captures facultatives `OVCR_CAPTURE_DIR`), ESLint 0 signalement. Les boîtes de dialogue du main sont remplacées pendant les tests.
+- **Build** : `app.asar` = les 251 entrées de la 1.7.0 + `accounts-transfer.js` et `renderer/transfer-ui.js`, aucun fichier interne, version 1.8.0 dans le `.exe` (fuses appliqués et relus par `npm run dist`, inchangés).
+- **Validé à la main par l'utilisateur** le 28/11/2026 avec le vrai `.exe` 1.8.0 et le vrai profil (`TESTS-MANUELS.md`, section « Version 1.8.0 »), puis livré : zip `dist/OVCR-AI-Manager-1.8.0.zip` (142,3 Mo, 128 fichiers, mêmes chemins que la 1.7.0). Pas de release GitHub.
+
 ### Note pour l'IA qui reçoit ce contexte
 Quand tu proposes une modification : précise **dans quel fichier** (le plus souvent un module de `renderer/` — voir §3 et §7 — ou `index.html`, parfois `main.js` / un module du main), rappelle que c'est du **JS vanilla en script classique** (pas de modules/build), respecte les **variables CSS du thème** existantes, et n'oublie pas que l'app tourne aussi **packagée en .exe** (chemins relatifs vs absolus — voir le chargement de Monaco).
 
@@ -525,5 +543,7 @@ Réflexes : **toute donnée utilisateur injectée en HTML doit passer par `escap
 Réflexes phase 2 : **toute écriture de fichier de données passe par `atomic-file.js`** ; un **changement de forme des comptes** = `SCHEMA` + une étape dans `MIGRATIONS` (pure, idempotente, charge utile toujours un tableau) + des tests dans `test/unit/migrations.test.js` ; une modification de comptes côté interface vérifie `ensureWritable()` ; **pas de `catch` vide** (journaliser, ou commenter pourquoi l'erreur est sans effet) ; les journaux ne contiennent **que des identifiants techniques** (id de compte, hôte, code), jamais un nom, un e-mail ou une URL complète ; une nouvelle fonction appelée depuis `COMMANDS`/la délégation et posée sur `window` doit être ajoutée aux globales de `eslint.config.js` ; lancer `npm test`, `npm run test:electron` et `npm run lint` avant tout build.
 
 Réflexes phase 3 : un fuse se change **uniquement** dans `WANTED` (`scripts/fuses.js`), avec `test/unit/fuses.test.js`, `npm run test:fuses` et `npm run test:cookies` ; **ne jamais repasser `EnableCookieEncryption` à `false`** (toutes les sessions des utilisateurs seraient effacées) ; après une montée d'Electron, `npm run dist` échoue si un nouveau fuse apparaît : le décider explicitement. **Electron en version exacte** dans `package.json`, publiée depuis au moins deux semaines ; à chaque montée de version, relire les « breaking changes », puis s'appuyer sur `browser-identity.js` (scénario d'intégration : marque GREASE, FedCM) et sur le contrôle « aucune API Electron dépréciée » ; `safeStorage` uniquement par son **API asynchrone** ; toute évolution du chiffrement se vérifie aussi **entre deux vrais binaires** sur un même profil (l'ancien relit-il ce qu'écrit le nouveau ?), avec une sortie normale de l'app (sinon `Local State` n'est pas écrit). Les écritures de comptes passent par `writeEnvelope()` (jamais `encode()` + `writeAtomic()` à la main : le rechiffrement différé d'un profil neuf en dépend). La version se change **uniquement** dans `"version"` de `package.json` ; un nouveau motif d'exclusion du `.exe` va dans `IGNORE` (`scripts/dist.js`) avec `test/unit/dist.test.js`.
+
+Réflexes P7 (1.8.0) : un fichier choisi par l'utilisateur s'ouvre **dans le main** (boîte de dialogue), jamais par un chemin venu de l'interface ; une donnée lue dans un fichier externe est validée par `sanitizeList(…, true)` et affichée par `textContent` ; toute écriture de comptes qui n'est pas un enregistrement ordinaire passe par `serial()`, fait d'abord sa copie dans `backups/` et réutilise `writeInner()`.
 
 Réflexes P6 (1.7.0) : un nouveau script de l'interface = IIFE `'use strict'` qui s'enregistre dans `OVCR` et **ne fait rien à son chargement** (`init(ctx)` appelé par `app.js`) ; son `<script>` va dans `index.html` **après `core.js` et avant `app.js`** ; il s'ajoute à la liste « gardés dans le .exe » de `test/unit/dist.test.js`. Pas de `const` de premier niveau hors IIFE (tous les scripts classiques partagent la même portée globale). L'état partagé passe par `OVCR.state`, jamais par une nouvelle globale. Un test qui appelle une fonction de l'interface doit passer par son nom `window.*` ou `OVCR.*` : chercher dans `test/` avant de déplacer ou renommer une fonction.

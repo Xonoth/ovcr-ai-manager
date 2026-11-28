@@ -87,7 +87,7 @@ Pas de liste blanche d'extensions : l'éditeur sert à du code de toute sorte (`
 | Donnée | Emplacement | Protection |
 |---|---|---|
 | Comptes (noms, e-mails, profils, cooldowns) | `%APPDATA%\ai-manager\accounts.json` (+ `.bak`) | **chiffré** `safeStorage` (DPAPI : lisible seulement par ce compte Windows). Profil **neuf** : en clair quelques secondes, le temps que Chromium écrive la clé sur le disque (voir ci-dessous) |
-| Sauvegardes (`pre-migration-*`, `pre-schema-*`, `bak-preserved-*`) | `%APPDATA%\ai-manager\backups\` | copies d'enveloppes : chiffrées de même ; jamais supprimées par l'app |
+| Sauvegardes (`pre-migration-*`, `pre-schema-*`, `bak-preserved-*`, `pre-import-*`) | `%APPDATA%\ai-manager\backups\` | copies d'enveloppes : chiffrées de même ; jamais supprimées par l'app |
 | Autorisations des sites | `%APPDATA%\ai-manager\site-permissions.json` | en clair (origines + oui/non : rien de personnel) |
 | Préférences d'affichage (largeurs, cartes repliées) | `localStorage` | en clair (non sensibles) |
 | Journal de diagnostic | `%APPDATA%\ai-manager\logs\ovcr*.log` (3 × 1 Mo max) | en clair, **expurgé** : e-mails masqués, URL réduites à l'hôte (pas de jeton OAuth), nom du compte Windows retiré des chemins ; ne contient que des identifiants techniques (id de compte, hôte, code d'erreur). Rien n'est envoyé : l'utilisateur copie le diagnostic s'il veut le partager. |
@@ -124,6 +124,13 @@ Le renderer n'efface les clés `localStorage` qu'après ce succès. Les cookies 
 
 Les comptes **actuels** sont réécrits dans le `localStorage` au format 1.0.4, `accounts.json(.bak)` sont renommés en `*.reverted-<date>.json` (rien n'est supprimé), puis l'app se ferme : la 1.0.4 peut être relancée. Testé : la vraie 1.0.4 relit alors les comptes, y compris les modifications faites après la migration. **Depuis la 1.5.0**, la 1.0.4 ne relit plus les cookies chiffrés : les comptes reviennent, mais il faut se reconnecter à tous les services (voir « Cookies chiffrés »).
 
+### Export / import des comptes (depuis la 1.8.0)
+
+- **Export en clair** (décision de l'utilisateur) : noms, e-mails, profils, couleurs, services et cooldowns, dans un fichier choisi par l'utilisateur. L'interface le dit avant chaque export. Le fichier ne contient **jamais** de cookies, de sessions ni de mot de passe : l'app ne lit pas `Partitions/` (au plus la **liste des noms** de ses dossiers, à l'import, pour qu'un compte « nouveau » n'hérite pas de la session d'un compte supprimé).
+- **Aucun chemin ne vient de l'interface** : les boîtes « Enregistrer sous » / « Ouvrir » sont ouvertes par le processus principal ; seul le nom du fichier repart vers l'interface. Les comptes lus restent dans le main jusqu'à l'application, liés à un jeton à usage unique.
+- **Import** : 5 Mo au plus, format ou schéma plus récent refusé, validation **stricte** (un seul compte invalide refuse tout le fichier), doublons d'id ou de profil refusés. Conflits (même id ou même profil = même session) : un choix explicite, jamais deux comptes sur une session. Copie chiffrée du fichier principal dans `backups/pre-import-<date>.json` avant chaque import ; refusé en lecture seule (`newer_schema`, `migration_pending`), par l'interface et par le main.
+- Les noms et e-mails lus dans un fichier importé ne sont jamais interprétés en HTML.
+
 ### Récupération
 
 Fichier corrompu, indéchiffrable (autre compte Windows, mot de passe Windows réinitialisé par un administrateur) ou **introuvable** alors qu'une sauvegarde existe → modale proposant la sauvegarde. Un fichier illisible est toujours **mis de côté** (`accounts.unreadable-<date>.json`), jamais supprimé ; si l'utilisateur continue sans restaurer, une **copie de la sauvegarde** est d'abord mise à l'abri dans `backups/` (elle ne peut plus être écrasée par les rotations suivantes). En dernier recours, recréer un compte avec le **même nom de profil** retrouve sa session.
@@ -135,6 +142,7 @@ Données écrites par une **version plus récente** de l'app (schéma ou contene
 - **Cookies écrits avant la 1.5.0** : restés en clair dans `Partitions/` tant que le service ne les a pas renouvelés (se déconnecter puis se reconnecter les remplace, §5). Les cookies sont gérés par Chromium, pas par l'app ; l'app ne les lit ni ne les exporte. Le chiffrement est **irréversible** : revenir à une version antérieure efface toutes les sessions.
 - `safeStorage`/DPAPI (comptes **et** cookies depuis la 1.5.0) protège contre les autres comptes Windows et la copie du disque à froid, **pas** contre un programme malveillant qui tourne sous votre compte (il peut demander le déchiffrement lui-même). Règle inchangée : **une session Windows = une personne**.
 - Les anciennes valeurs effacées du `localStorage` peuvent subsister quelque temps dans les fichiers internes de LevelDB (`Local Storage\leveldb\*.log`) jusqu'à leur compactage par Chromium.
+- Un **fichier exporté** est en clair : qui y accède lit les noms, e-mails et profils des comptes (pas les sessions). C'est à l'utilisateur de le ranger.
 - `style-src 'unsafe-inline'` dans la CSP (nécessaire à Monaco et aux styles en ligne).
 - Exécutable non signé (SmartScreen). La vérification d'intégrité (1.4.0) protège `app.asar` contre une modification **isolée**, mais : elle ne couvre ni `app.asar.unpacked` (Monaco, chargé par l'interface), ni le `.exe` et les DLL ; et sans signature, rien n'empêche de remplacer **ensemble** le `.exe` et `app.asar` (ou d'inscrire une nouvelle empreinte). Comme pour `safeStorage`, cela ne protège pas d'un programme malveillant qui écrit déjà dans le dossier de l'app : la signature (§7) est le complément.
 - La liste `ALLOWED_POPUP_HOSTS` fait confiance à tous les sous-domaines de ses entrées (ex. `*.google.com`).
